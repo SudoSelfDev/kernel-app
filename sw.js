@@ -1,6 +1,8 @@
-/* Kernel service worker — caches the app shell for offline use.
-   Vault data is never cached here (it lives in localStorage, fetched live from the GitHub API). */
-const CACHE = "kernel-shell-v4";
+/* Kernel service worker — network-first for the app shell, cache fallback for offline.
+   Network-first means a deploy shows up on the next open — no stale-mix of old CSS
+   with new HTML. Vault data is never cached here (it lives in localStorage,
+   fetched live from the GitHub API). */
+const CACHE = "kernel-shell-v5";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -18,7 +20,16 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (url.hostname === "api.github.com") return; // data: network only
+  if (e.request.method !== "GET") return;
   e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request))
+    fetch(e.request)
+      .then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
 });
