@@ -1,5 +1,6 @@
 /* Kernel — personal vault dashboard PWA
-   M1: read-only dashboard · M1.5: themes + daily-task write-back */
+   M1: read-only dashboard · M1.5: themes + daily-task write-back
+   M1.6: task removal, schedule, articles reader, auto-hiding bars */
 "use strict";
 
 const OWNER = "SudoSelfDev";
@@ -13,16 +14,19 @@ const PATHS = {
   debts: atob("MjBfTGlmZWxvZy9EZWJ0TG9nLm1k"),
   study: atob("MTBfUHJvamVjdHMvQ2xvdWRfRW5naW5lZXJpbmcvUGhhc2VfMS9waGFzZTEtcHJvZ3Jlc3MubWQ="),
   dailyDir: atob("MjBfTGlmZWxvZy8yMV9EYWlseU5vdGVzLw=="),
+  schedule: atob("MjBfTGlmZWxvZy9zY2hlZHVsZS5qc29u"),
+  research: atob("MzBfTGlicmFyeS9SZXNlYXJjaA=="),
 };
 
 const LS_TOKEN = "kernel_pat";
-const LS_CACHE = "kernel_cache_v2";
+const LS_CACHE = "kernel_cache_v3";
 const LS_THEME = "kernel_theme"; // "auto" | "dark" | "light"
 
 const state = {
   view: "today",
   clientTab: "active",
-  files: {},          // clients/savings/debts/study: raw md · daily: {text, sha}|null
+  article: null,      // name of the open article, or null for the list
+  files: {},          // clients/savings/debts/study/schedule: raw · daily: {text, sha}|null · articles: [{name, text}]
   lastSync: null,
   error: null,
   busy: false,        // a write is in flight
@@ -68,7 +72,9 @@ function loadCache() {
   } catch { /* corrupt cache is disposable */ }
 }
 function saveCache() {
-  localStorage.setItem(LS_CACHE, JSON.stringify({ files: state.files, at: state.lastSync }));
+  try {
+    localStorage.setItem(LS_CACHE, JSON.stringify({ files: state.files, at: state.lastSync }));
+  } catch { /* quota — better to run uncached than to crash */ }
 }
 
 /* ---------- github api ---------- */
@@ -100,6 +106,17 @@ async function fetchRaw(path, { optional = false } = {}) {
   if (res.status === 401 || res.status === 403) throw new Error("auth");
   if (!res.ok) throw new Error(`fetch ${res.status}`);
   return res.text();
+}
+
+/* directory listing — array of {name, type, ...} */
+async function fetchDir(path, { optional = false } = {}) {
+  const res = await fetch(`${contentsUrl(path)}?ref=${BRANCH}`, {
+    headers: { ...ghHeaders(), Accept: "application/vnd.github+json" },
+  });
+  if (res.status === 404 && optional) return null;
+  if (res.status === 401 || res.status === 403) throw new Error("auth");
+  if (!res.ok) throw new Error(`fetch ${res.status}`);
+  return res.json();
 }
 
 /* JSON variant — returns {text, sha} so we can write the file back */
@@ -138,19 +155,32 @@ function todayNoteName() {
 }
 const todayNotePath = () => PATHS.dailyDir + todayNoteName();
 
+const todayIso = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 async function syncAll() {
   if (!getToken()) return;
   setSyncStatus("syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, study, daily] = await Promise.all([
+    const [clients, savings, debts, study, daily, schedule, researchDir] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
       fetchRaw(PATHS.study, { optional: true }),
       fetchWithSha(todayNotePath(), { optional: true }),
+      fetchRaw(PATHS.schedule, { optional: true }),
+      fetchDir(PATHS.research, { optional: true }),
     ]);
-    state.files = { clients, savings, debts, study, daily };
+    let articles = [];
+    if (Array.isArray(researchDir)) {
+      const mds = researchDir.filter((f) => f.type === "file" && f.name.endsWith(".md"));
+      const texts = await Promise.all(mds.map((f) => fetchRaw(`${PATHS.research}/${f.name}`)));
+      articles = mds.map((f, i) => ({ name: f.name, text: texts[i] }));
+    }
+    state.files = { clients, savings, debts, study, daily, schedule, articles };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -202,6 +232,18 @@ function toggleTask(lineIdx) {
   saveDaily(lines.join("\n"), "kernel-app: update daily tasks");
 }
 
+function removeTask(lineIdx) {
+  const d = state.files.daily;
+  if (!d || state.busy) return;
+  const lines = d.text.split("\n");
+  const t = (lines[lineIdx] || "").trim();
+  if (!/^- \[[ xX]\]/.test(t)) return;
+  const label = t.replace(/^- \[[ xX]\]\s*/, "");
+  if (!confirm(`Remove "${label}"?`)) return;
+  lines.splice(lineIdx, 1);
+  saveDaily(lines.join("\n"), "kernel-app: remove daily task");
+}
+
 function addTask(text) {
   const d = state.files.daily;
   if (!d || state.busy || !text.trim()) return;
@@ -230,9 +272,7 @@ function addTask(text) {
 
 function createTodayNote() {
   if (state.busy) return;
-  const d = new Date();
-  const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const text = `---\ndate: "${iso}"\ntags:\n  - daily\n---\n\n## Today\n\n\n\n## Log\n\n`;
+  const text = `---\ndate: "${todayIso()}"\ntags:\n  - daily\n---\n\n## Today\n\n\n\n## Log\n\n`;
   state.files.daily = { text: "", sha: null };
   saveDaily(text, "kernel-app: create daily note");
 }
@@ -269,6 +309,21 @@ function parseTable(md) {
     });
 }
 
+function frontmatter(md) {
+  const m = (md || "").match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const out = {};
+  if (m) {
+    m[1].split("\n").forEach((l) => {
+      const i = l.indexOf(":");
+      if (i > 0 && !/^\s/.test(l)) {
+        out[l.slice(0, i).trim()] = l.slice(i + 1).trim().replace(/^["']|["']$/g, "");
+      }
+    });
+  }
+  return out;
+}
+const stripFrontmatter = (md) => (md || "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+
 const num = (s) => {
   const m = String(s || "").replace(/,/g, "").match(/-?\d+(\.\d+)?/);
   return m ? parseFloat(m[0]) : null;
@@ -292,11 +347,93 @@ function daysUntil(dateStr) {
   return Math.round((d - today) / 86400000);
 }
 
+/* ---------- article markdown renderer ---------- */
+
+function mdInline(s) {
+  s = esc(s);
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<i>$2</i>");
+  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, t, alias) => `<span class="wikilink">${alias || t}</span>`);
+  s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return s;
+}
+
+function mdToHtml(md) {
+  const lines = md.split("\n");
+  const out = [];
+  let para = [], list = null, quote = [], i = 0;
+
+  const flushPara = () => { if (para.length) { out.push(`<p>${mdInline(para.join(" "))}</p>`); para = []; } };
+  const flushList = () => { if (list) { out.push(`<${list.tag}>${list.items.map((x) => `<li>${x}</li>`).join("")}</${list.tag}>`); list = null; } };
+  const flushQuote = () => { if (quote.length) { out.push(`<blockquote>${quote.map(mdInline).join("<br>")}</blockquote>`); quote = []; } };
+  const flushAll = () => { flushPara(); flushList(); flushQuote(); };
+
+  while (i < lines.length) {
+    const raw = lines[i];
+    const l = raw.trim();
+
+    if (l.startsWith("```")) {
+      flushAll();
+      const code = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith("```")) { code.push(lines[i]); i++; }
+      out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+      i++;
+      continue;
+    }
+
+    if (l.startsWith("|") && i + 1 < lines.length && /^\|[\s\-:|]+\|?$/.test(lines[i + 1].trim())) {
+      flushAll();
+      const cells = (s) => s.replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      const head = cells(l);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) { rows.push(cells(lines[i].trim())); i++; }
+      out.push(`<table><thead><tr>${head.map((h) => `<th>${mdInline(h)}</th>`).join("")}</tr></thead><tbody>${
+        rows.map((r) => `<tr>${r.map((c) => `<td>${mdInline(c)}</td>`).join("")}</tr>`).join("")
+      }</tbody></table>`);
+      continue;
+    }
+
+    const h = l.match(/^(#{1,6})\s+(.*)/);
+    if (h) { flushAll(); out.push(`<h${h[1].length}>${mdInline(h[2])}</h${h[1].length}>`); i++; continue; }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(l)) { flushAll(); out.push("<hr>"); i++; continue; }
+
+    if (l.startsWith(">")) { flushPara(); flushList(); quote.push(l.replace(/^>\s?/, "")); i++; continue; }
+
+    const li = l.match(/^([-*]|\d+\.)\s+(.*)/);
+    if (li) {
+      flushPara(); flushQuote();
+      const tag = /^\d+\.$/.test(li[1]) ? "ol" : "ul";
+      if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
+      const box = li[2].match(/^\[([ xX])\]\s*(.*)/);
+      list.items.push(box
+        ? `<span class="md-box ${box[1] !== " " ? "checked" : ""}">${box[1] !== " " ? "✓" : ""}</span> ${mdInline(box[2])}`
+        : mdInline(li[2]));
+      i++;
+      continue;
+    }
+
+    if (l === "") { flushAll(); i++; continue; }
+
+    flushList(); flushQuote();
+    para.push(l);
+    i++;
+  }
+  flushAll();
+  return out.join("\n");
+}
+
 /* ---------- model ---------- */
 
 function buildModel() {
   const f = state.files;
-  const m = { active: [], leads: [], churned: [], savings: {}, debts: [], debtTotal: null, study: null, tasks: null };
+  const m = {
+    active: [], leads: [], churned: [], savings: {}, debts: [], debtTotal: null,
+    study: null, tasks: null, schedule: null, articles: [],
+  };
 
   if (f.clients) {
     m.leads = parseTable(section(f.clients, "## Leads"));
@@ -359,6 +496,41 @@ function buildModel() {
     }
   }
 
+  if (f.schedule) {
+    try {
+      const sch = JSON.parse(f.schedule);
+      const iso = todayIso();
+      m.schedule = {
+        updated: sch.updated || null,
+        events: (sch.events || [])
+          .filter((e) => e.date === iso)
+          .sort((a, b) => `${a.allDay ? 0 : 1}${a.start || ""}`.localeCompare(`${b.allDay ? 0 : 1}${b.start || ""}`)),
+      };
+    } catch { /* malformed schedule.json — treat as absent */ }
+  }
+
+  if (Array.isArray(f.articles)) {
+    m.articles = f.articles.map((a) => {
+      const fm = frontmatter(a.text);
+      const body = stripFrontmatter(a.text);
+      const title = fm.title
+        || (a.text.match(/^#\s+(.+)$/m) || [])[1]
+        || a.name.replace(/\.md$/, "").split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+      const para = body.split("\n").find((l) => l.trim() && !/^[#\-*>|!\[`]/.test(l.trim()));
+      const words = body.split(/\s+/).filter(Boolean).length;
+      return {
+        name: a.name,
+        title,
+        created: fm.created || "",
+        topic: fm.topic || "",
+        author: fm.author || "",
+        minutes: Math.max(1, Math.round(words / 200)),
+        excerpt: para ? (para.length > 160 ? para.slice(0, 160).trimEnd() + "…" : para) : "",
+        body,
+      };
+    }).sort((x, y) => (y.created || "").localeCompare(x.created || ""));
+  }
+
   return m;
 }
 
@@ -401,14 +573,35 @@ function renderToday(m) {
        <button class="btn secondary" id="btn-create-note" ${dis}>Create today's note</button>`
     : `${m.tasks.length === 0 ? `<div class="empty">Nothing on the list — add one below</div>` : ""}
        ${m.tasks.map((t) => `
-         <button class="task ${t.done ? "done" : ""}" data-line="${t.line}" ${dis}>
-           <span class="box">${t.done ? "✓" : ""}</span>
-           <span class="txt">${esc(t.text)}</span>
-         </button>`).join("")}
+         <div class="task-row">
+           <button class="task ${t.done ? "done" : ""}" data-line="${t.line}" ${dis}>
+             <span class="box">${t.done ? "✓" : ""}</span>
+             <span class="txt">${esc(t.text)}</span>
+           </button>
+           <button class="task-del" data-del-line="${t.line}" title="Remove task" aria-label="Remove task" ${dis}>✕</button>
+         </div>`).join("")}
        <div class="add-task">
          <input type="text" id="inp-new-task" placeholder="Add a task…" ${dis}>
          <button id="btn-add-task" ${dis}>+</button>
        </div>`;
+
+  let scheduleHtml;
+  if (!m.schedule) {
+    scheduleHtml = `<div class="empty">No schedule synced yet — calendar sync runs from the vault repo</div>`;
+  } else if (m.schedule.events.length === 0) {
+    scheduleHtml = `<div class="empty">Nothing scheduled today</div>`;
+  } else {
+    const now = new Date();
+    const hm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    scheduleHtml = m.schedule.events.map((e) => {
+      const live = !e.allDay && e.start && e.end && hm >= e.start && hm < e.end;
+      return `<div class="row">
+        <div class="r-main"><div class="r-title">${esc(e.title || "Busy")}</div>
+        <div class="r-sub">${e.allDay ? "All day" : `${esc(e.start || "?")} – ${esc(e.end || "?")}`}</div></div>
+        <div class="r-end">${live ? `<span class="chip ok">now</span>` : ""}</div>
+      </div>`;
+    }).join("");
+  }
 
   return `
   <div class="card">
@@ -417,11 +610,19 @@ function renderToday(m) {
   </div>
 
   <div class="card">
-    <h2>Savings <span class="h-extra muted">target ${s.target ? s.target.toLocaleString() : "—"} MAD</span></h2>
-    <div class="big-number">${s.current ? s.current.toLocaleString() : "—"} <small>MAD</small></div>
-    <div class="bar"><div style="width:${pct}%"></div></div>
-    <div class="bar-sub"><span>${pct.toFixed(0)}%</span><span>monthly target: ${s.monthly ? s.monthly.toLocaleString() : "—"} MAD</span></div>
+    <h2>Schedule ${m.schedule && m.schedule.updated ? `<span class="h-extra muted">synced ${esc(m.schedule.updated.slice(0, 16).replace("T", " "))}</span>` : ""}</h2>
+    ${scheduleHtml}
   </div>
+
+  ${m.study ? `
+  <div class="card">
+    <h2>Cloud Study</h2>
+    <div class="row">
+      <div class="r-main"><div class="r-title">${esc(m.study.title)}</div>
+      <div class="r-sub">${m.study.done}/${m.study.total} checklist items done</div></div>
+      <div class="r-end"><span class="chip ${m.study.done > 0 ? "ok" : "dim"}">${m.study.total ? Math.round((m.study.done / m.study.total) * 100) : 0}%</span></div>
+    </div>
+  </div>` : ""}
 
   <div class="card">
     <h2>Clients</h2>
@@ -434,15 +635,12 @@ function renderToday(m) {
       <div class="r-sub">${esc(next.Expiry)} · ${esc(next.Plan || "")} · ${esc(next.Price || "")}</div></div></div>` : ""}
   </div>
 
-  ${m.study ? `
   <div class="card">
-    <h2>Cloud Study</h2>
-    <div class="row">
-      <div class="r-main"><div class="r-title">${esc(m.study.title)}</div>
-      <div class="r-sub">${m.study.done}/${m.study.total} checklist items done</div></div>
-      <div class="r-end"><span class="chip ${m.study.done > 0 ? "ok" : "dim"}">${m.study.total ? Math.round((m.study.done / m.study.total) * 100) : 0}%</span></div>
-    </div>
-  </div>` : ""}`;
+    <h2>Savings <span class="h-extra muted">target ${s.target ? s.target.toLocaleString() : "—"} MAD</span></h2>
+    <div class="big-number">${s.current ? s.current.toLocaleString() : "—"} <small>MAD</small></div>
+    <div class="bar"><div style="width:${pct}%"></div></div>
+    <div class="bar-sub"><span>${pct.toFixed(0)}%</span><span>monthly target: ${s.monthly ? s.monthly.toLocaleString() : "—"} MAD</span></div>
+  </div>`;
 }
 
 function clientCard(c, kind) {
@@ -527,6 +725,29 @@ function renderMoney(m) {
   </div>` : ""}`;
 }
 
+function renderArticles(m) {
+  if (state.article) {
+    const a = m.articles.find((x) => x.name === state.article);
+    if (a) {
+      return `
+      <button class="back-btn" id="btn-art-back">‹ All articles</button>
+      <article class="article">
+        <h1>${esc(a.title)}</h1>
+        <div class="art-meta">${esc(a.created)}${a.author ? ` · ${esc(a.author)}` : ""} · ${a.minutes} min read</div>
+        ${mdToHtml(a.body.replace(/^#\s+.+\n/, ""))}
+      </article>`;
+    }
+    state.article = null;
+  }
+  if (!m.articles.length) return `<div class="empty">No research articles in the vault yet</div>`;
+  return m.articles.map((a) => `
+    <button class="card art-card" data-article="${esc(a.name)}">
+      <div class="art-title">${esc(a.title)}</div>
+      ${a.excerpt ? `<div class="art-excerpt">${esc(a.excerpt)}</div>` : ""}
+      <div class="art-meta">${esc(a.created)}${a.topic ? ` · ${esc(a.topic)}` : ""} · ${a.minutes} min read</div>
+    </button>`).join("");
+}
+
 function renderSettings() {
   const pref = getThemePref();
   return `
@@ -557,7 +778,7 @@ function renderSettings() {
   </div>
   <div class="card">
     <h2>About</h2>
-    <p class="muted" style="font-size:0.8rem;line-height:1.5">Kernel — dashboard over a private vault repo. Data is fetched straight from GitHub on this device and cached locally. Task edits are committed back to the vault as you. Nothing is sent anywhere else.</p>
+    <p class="muted" style="font-size:0.8rem;line-height:1.5">Kernel — dashboard over a private vault repo. Data is fetched straight from GitHub on this device and cached locally. Task edits are committed back to the vault as you. The Today schedule reads a file kept fresh by a GitHub Action in the vault repo. Nothing is sent anywhere else.</p>
   </div>`;
 }
 
@@ -592,12 +813,19 @@ function render() {
   const v = state.view;
   let html = state.error ? `<div class="error-banner">${esc(state.error)}</div>` : "";
   if (!state.files.clients && !state.error) html += `<div class="empty">Loading vault…</div>`;
-  else html += v === "today" ? renderToday(m) : v === "clients" ? renderClients(m) : v === "money" ? renderMoney(m) : renderSettings();
+  else html += v === "today" ? renderToday(m)
+    : v === "clients" ? renderClients(m)
+    : v === "money" ? renderMoney(m)
+    : v === "articles" ? renderArticles(m)
+    : renderSettings();
   $("#view").innerHTML = html;
 
   if (v === "today") {
     document.querySelectorAll(".task[data-line]").forEach((b) => {
       b.onclick = () => toggleTask(parseInt(b.dataset.line, 10));
+    });
+    document.querySelectorAll("[data-del-line]").forEach((b) => {
+      b.onclick = () => removeTask(parseInt(b.dataset.delLine, 10));
     });
     const addBtn = $("#btn-add-task");
     const addInp = $("#inp-new-task");
@@ -614,6 +842,13 @@ function render() {
       b.onclick = () => { state.clientTab = b.dataset.ctab; render(); };
     });
   }
+  if (v === "articles") {
+    document.querySelectorAll("[data-article]").forEach((b) => {
+      b.onclick = () => { state.article = b.dataset.article; showBars(); render(); scrollTo(0, 0); };
+    });
+    const back = $("#btn-art-back");
+    if (back) back.onclick = () => { state.article = null; showBars(); render(); scrollTo(0, 0); };
+  }
   if (v === "settings") {
     document.querySelectorAll("[data-theme-pref]").forEach((b) => {
       b.onclick = () => setThemePref(b.dataset.themePref);
@@ -627,13 +862,33 @@ function render() {
   }
 }
 
+/* ---------- auto-hiding bars ---------- */
+
+const showBars = () => document.body.classList.remove("bars-hidden");
+
+let lastY = 0;
+addEventListener("scroll", () => {
+  const y = scrollY;
+  if (y < 40) {
+    showBars();
+  } else if (y > lastY + 8) {
+    document.body.classList.add("bars-hidden");
+  } else if (y < lastY - 8) {
+    showBars();
+  }
+  lastY = y;
+}, { passive: true });
+
 /* ---------- boot ---------- */
 
 document.querySelectorAll(".tab").forEach((b) => {
   b.onclick = () => {
     state.view = b.dataset.view;
+    state.article = null;
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === b));
+    showBars();
     render();
+    scrollTo(0, 0);
   };
 });
 $("#btn-refresh").onclick = () => syncAll();

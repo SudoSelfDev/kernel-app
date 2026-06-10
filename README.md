@@ -8,6 +8,14 @@ fine-grained personal access token (read-only, single repo) that the user pastes
 once and that never leaves the device (`localStorage`). Parsed data is cached
 locally for offline use.
 
+## Features
+
+- Today: daily tasks (toggle, add, remove — committed back to the vault),
+  today's schedule (read from a JSON file a GitHub Action keeps fresh in the
+  vault repo), study progress, client summary, savings bar
+- Clients, Money, and Articles (research notes rendered as a reader) views
+- Auto-hiding top/bottom bars on scroll
+
 ## Stack
 
 - Vanilla JS, no build step
