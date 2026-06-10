@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="description" content="Personal vault dashboard">
+  <title>Kernel</title>
+  <script>
+    /* set theme before first paint to avoid flash */
+    (function () {
+      var pref = localStorage.getItem("kernel_theme") || "auto";
+      var t = pref !== "auto" ? pref
+        : (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">⌘ Kernel</div>
+    <div id="sync-status" class="sync-status"></div>
+    <button id="btn-theme" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">☀</button>
+    <button id="btn-refresh" class="icon-btn" title="Refresh" aria-label="Refresh">⟳</button>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <nav id="tabbar">
+    <button data-view="today" class="tab active"><span>☀</span>Today</button>
+    <button data-view="clients" class="tab"><span>👥</span>Clients</button>
+    <button data-view="money" class="tab"><span>💰</span>Money</button>
+    <button data-view="settings" class="tab"><span>⚙</span>Settings</button>
+  </nav>
+
+  <script src="app.js"></script>
+</body>
+</html>
