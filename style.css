@@ -66,8 +66,11 @@ body.bars-hidden #topbar { transform: translateY(-110%); opacity: 0; }
 .icon-btn {
   background: var(--surface); color: var(--text);
   border: 1px solid var(--border); border-radius: 10px;
-  width: 34px; height: 34px; font-size: 1rem; cursor: pointer;
+  width: 34px; height: 34px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
 }
+.icon-btn svg { display: block; }
 
 .view {
   max-width: 520px; margin: 0 auto;
@@ -94,11 +97,12 @@ body.bars-hidden #tabbar {
   opacity: 0;
 }
 .tab {
-  background: none; border: none; color: var(--muted);
-  font-size: 0.7rem; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 4px 10px; cursor: pointer; border-radius: 10px;
+  flex: 1; background: none; border: none; color: var(--muted);
+  font-size: 0.68rem; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 4px 0; cursor: pointer; border-radius: 10px;
 }
-.tab span { font-size: 1.15rem; }
+.tab .ticon { height: 20px; display: flex; align-items: center; justify-content: center; }
+.tab .ticon svg { display: block; }
 .tab.active { color: var(--accent); }
 
 .card {
@@ -143,7 +147,8 @@ body.bars-hidden #tabbar {
 .task-del {
   flex-shrink: 0; width: 32px; height: 32px;
   background: none; border: none; border-radius: 8px;
-  color: var(--muted); font-size: 0.85rem; cursor: pointer;
+  color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
 }
 .task-del:active { background: var(--danger-bg); color: var(--danger-fg); }
 .task-del[disabled] { opacity: 0.5; }
@@ -164,14 +169,48 @@ body.bars-hidden #tabbar {
 .task.done .txt { color: var(--muted); text-decoration: line-through; }
 .task[disabled] { opacity: 0.5; }
 
-.add-task { display: flex; gap: 8px; margin-top: 10px; }
-.add-task input { flex: 1; }
-.add-task button {
-  flex-shrink: 0; width: 46px; border: none; border-radius: 10px;
+/* floating add button — sits above the tab bar, hides with it */
+#fab {
+  position: fixed; z-index: 11;
+  right: max(16px, calc(50% - 252px));
+  bottom: calc(env(safe-area-inset-bottom) + 88px);
+  width: 54px; height: 54px; border-radius: 50%;
   background: var(--accent); color: var(--btn-fg);
-  font-size: 1.3rem; font-weight: 700; cursor: pointer;
+  border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  transition: transform 0.25s ease, opacity 0.25s ease;
 }
-.add-task button[disabled] { opacity: 0.5; }
+#fab.hidden { display: none; }
+#fab[disabled] { opacity: 0.6; }
+body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
+
+/* task composer sheet */
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: 20;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.sheet-backdrop.hidden { display: none; }
+.sheet {
+  width: min(520px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border); border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 18px 16px calc(env(safe-area-inset-bottom) + 18px);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sheet h3 { font-size: 1rem; }
+.sheet p { font-size: 0.78rem; }
+.sheet textarea {
+  width: 100%; resize: vertical; min-height: 110px;
+  background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 11px 12px; font-size: 0.95rem; font-family: inherit;
+}
+.sheet textarea:focus { outline: 1px solid var(--accent); }
+.sheet-actions { display: flex; gap: 8px; }
+.sheet-actions .btn { flex: 1; }
 
 .seg { display: flex; gap: 6px; margin-bottom: 2px; }
 .seg button {
@@ -226,6 +265,7 @@ input::placeholder { color: var(--muted); }
   background: none; border: none; color: var(--accent);
   font-size: 0.95rem; font-weight: 600; text-align: left;
   padding: 2px 0; cursor: pointer;
+  display: flex; align-items: center; gap: 2px;
 }
 
 .article {

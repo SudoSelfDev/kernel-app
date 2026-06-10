@@ -24,18 +24,32 @@
   <header id="topbar">
     <div class="brand">⌘ Kernel</div>
     <div id="sync-status" class="sync-status"></div>
-    <button id="btn-theme" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">☀</button>
-    <button id="btn-refresh" class="icon-btn" title="Refresh" aria-label="Refresh">⟳</button>
+    <button id="btn-theme" class="icon-btn" title="Toggle theme" aria-label="Toggle theme"></button>
+    <button id="btn-refresh" class="icon-btn" title="Refresh" aria-label="Refresh"></button>
   </header>
 
   <main id="view" class="view"></main>
 
+  <button id="fab" class="hidden" aria-label="Add tasks"></button>
+
+  <div id="composer" class="sheet-backdrop hidden">
+    <div class="sheet">
+      <h3>Add tasks</h3>
+      <p class="muted">One task per line — all saved in a single sync.</p>
+      <textarea id="composer-text" rows="5" placeholder="Buy credits&#10;Call Hamza about renewal&#10;…"></textarea>
+      <div class="sheet-actions">
+        <button class="btn secondary" id="composer-cancel">Cancel</button>
+        <button class="btn" id="composer-add">Add</button>
+      </div>
+    </div>
+  </div>
+
   <nav id="tabbar">
-    <button data-view="today" class="tab active"><span>☀</span>Today</button>
-    <button data-view="clients" class="tab"><span>👥</span>Clients</button>
-    <button data-view="money" class="tab"><span>💰</span>Money</button>
-    <button data-view="articles" class="tab"><span>📖</span>Read</button>
-    <button data-view="settings" class="tab"><span>⚙</span>Settings</button>
+    <button data-view="today" data-icon="sun" class="tab active"><span class="ticon"></span>Today</button>
+    <button data-view="clients" data-icon="users" class="tab"><span class="ticon"></span>Clients</button>
+    <button data-view="money" data-icon="card" class="tab"><span class="ticon"></span>Finances</button>
+    <button data-view="articles" data-icon="book" class="tab"><span class="ticon"></span>Read</button>
+    <button data-view="settings" data-icon="gear" class="tab"><span class="ticon"></span>Settings</button>
   </nav>
 
   <script src="app.js"></script>
