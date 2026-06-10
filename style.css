@@ -41,7 +41,7 @@ html[data-theme="light"] {
   --danger-bg: #fee2e2;    --danger-border: #fca5a5; --danger-fg: #b91c1c;
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
 html, body {
   background: var(--bg);
@@ -71,6 +71,7 @@ body.bars-hidden #topbar { transform: translateY(-110%); opacity: 0; }
   flex-shrink: 0;
 }
 .icon-btn svg { display: block; }
+.icon-btn:active { background: var(--surface2); }
 
 .view {
   max-width: 520px; margin: 0 auto;
@@ -104,6 +105,7 @@ body.bars-hidden #tabbar {
 .tab .ticon { height: 20px; display: flex; align-items: center; justify-content: center; }
 .tab .ticon svg { display: block; }
 .tab.active { color: var(--accent); }
+.tab:active { background: var(--surface2); }
 
 .card {
   background: var(--surface);
