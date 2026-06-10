@@ -1,6 +1,6 @@
 /* Kernel service worker — caches the app shell for offline use.
    Vault data is never cached here (it lives in localStorage, fetched live from the GitHub API). */
-const CACHE = "kernel-shell-v2";
+const CACHE = "kernel-shell-v3";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
