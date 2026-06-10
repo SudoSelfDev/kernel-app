@@ -32,6 +32,24 @@ const state = {
   busy: false,        // a write is in flight
 };
 
+/* ---------- icons (feather-style, stroke = currentColor) ---------- */
+
+const ICONS = {
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
+  moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+  refresh: '<path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+  users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  card: '<rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/>',
+  book: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  x: '<path d="M18 6L6 18M6 6l12 12"/>',
+  chevronLeft: '<polyline points="15 18 9 12 15 6"/>',
+};
+
+const icon = (name, size = 20) =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+
 /* ---------- theme ---------- */
 
 const getThemePref = () => localStorage.getItem(LS_THEME) || "auto";
@@ -47,7 +65,7 @@ function applyTheme() {
   document.documentElement.dataset.theme = t;
   document.querySelector('meta[name="theme-color"]').content = t === "light" ? "#f6f8fa" : "#0d1117";
   const btn = $("#btn-theme");
-  if (btn) btn.textContent = t === "light" ? "☾" : "☀";
+  if (btn) btn.innerHTML = icon(t === "light" ? "moon" : "sun", 18);
 }
 
 function setThemePref(pref) {
@@ -244,14 +262,22 @@ function removeTask(lineIdx) {
   saveDaily(lines.join("\n"), "kernel-app: remove daily task");
 }
 
-function addTask(text) {
+/* add one or many tasks in a single commit */
+function addTasks(texts) {
+  const tasks = texts.map((t) => t.trim()).filter(Boolean).map((t) => `- [ ] ${t}`);
+  if (state.busy || !tasks.length) return;
   const d = state.files.daily;
-  if (!d || state.busy || !text.trim()) return;
-  const task = `- [ ] ${text.trim()}`;
+  if (!d) {
+    /* no note yet — create it with the tasks in one go */
+    const text = `---\ndate: "${todayIso()}"\ntags:\n  - daily\n---\n\n## Today\n\n${tasks.join("\n")}\n\n## Log\n\n`;
+    state.files.daily = { text: "", sha: null };
+    saveDaily(text, "kernel-app: create daily note");
+    return;
+  }
   const lines = d.text.split("\n");
   const h = lines.findIndex((l) => l.trim().toLowerCase().startsWith("## today"));
   if (h === -1) {
-    lines.push("", "## Today", "", task);
+    lines.push("", "## Today", "", ...tasks);
   } else {
     let end = lines.length;
     for (let i = h + 1; i < lines.length; i++) {
@@ -265,16 +291,9 @@ function addTask(text) {
       insert = h + 1;
       if ((lines[insert] || "").trim() === "") insert++;
     }
-    lines.splice(insert, 0, task);
+    lines.splice(insert, 0, ...tasks);
   }
-  saveDaily(lines.join("\n"), "kernel-app: add daily task");
-}
-
-function createTodayNote() {
-  if (state.busy) return;
-  const text = `---\ndate: "${todayIso()}"\ntags:\n  - daily\n---\n\n## Today\n\n\n\n## Log\n\n`;
-  state.files.daily = { text: "", sha: null };
-  saveDaily(text, "kernel-app: create daily note");
+  saveDaily(lines.join("\n"), tasks.length === 1 ? "kernel-app: add daily task" : `kernel-app: add ${tasks.length} daily tasks`);
 }
 
 /* ---------- markdown parsing ---------- */
@@ -569,21 +588,16 @@ function renderToday(m) {
   const dis = state.busy ? "disabled" : "";
 
   const tasksHtml = m.tasks === null
-    ? `<div class="empty">No daily note yet today</div>
-       <button class="btn secondary" id="btn-create-note" ${dis}>Create today's note</button>`
-    : `${m.tasks.length === 0 ? `<div class="empty">Nothing on the list — add one below</div>` : ""}
+    ? `<div class="empty">No daily note yet today — tap + to start one</div>`
+    : `${m.tasks.length === 0 ? `<div class="empty">Nothing on the list — tap + to add tasks</div>` : ""}
        ${m.tasks.map((t) => `
          <div class="task-row">
            <button class="task ${t.done ? "done" : ""}" data-line="${t.line}" ${dis}>
              <span class="box">${t.done ? "✓" : ""}</span>
              <span class="txt">${esc(t.text)}</span>
            </button>
-           <button class="task-del" data-del-line="${t.line}" title="Remove task" aria-label="Remove task" ${dis}>✕</button>
-         </div>`).join("")}
-       <div class="add-task">
-         <input type="text" id="inp-new-task" placeholder="Add a task…" ${dis}>
-         <button id="btn-add-task" ${dis}>+</button>
-       </div>`;
+           <button class="task-del" data-del-line="${t.line}" title="Remove task" aria-label="Remove task" ${dis}>${icon("x", 15)}</button>
+         </div>`).join("")}`;
 
   let scheduleHtml;
   if (!m.schedule) {
@@ -730,7 +744,7 @@ function renderArticles(m) {
     const a = m.articles.find((x) => x.name === state.article);
     if (a) {
       return `
-      <button class="back-btn" id="btn-art-back">‹ All articles</button>
+      <button class="back-btn" id="btn-art-back">${icon("chevronLeft", 17)} All articles</button>
       <article class="article">
         <h1>${esc(a.title)}</h1>
         <div class="art-meta">${esc(a.created)}${a.author ? ` · ${esc(a.author)}` : ""} · ${a.minutes} min read</div>
@@ -807,7 +821,7 @@ function renderSetup() {
 function render() {
   setSyncStatus();
   applyTheme();
-  if (!getToken()) { renderSetup(); return; }
+  if (!getToken()) { $("#fab").classList.add("hidden"); renderSetup(); return; }
 
   const m = buildModel();
   const v = state.view;
@@ -820,6 +834,10 @@ function render() {
     : renderSettings();
   $("#view").innerHTML = html;
 
+  /* the floating add button only makes sense on Today */
+  $("#fab").classList.toggle("hidden", v !== "today");
+  $("#fab").disabled = state.busy;
+
   if (v === "today") {
     document.querySelectorAll(".task[data-line]").forEach((b) => {
       b.onclick = () => toggleTask(parseInt(b.dataset.line, 10));
@@ -827,15 +845,6 @@ function render() {
     document.querySelectorAll("[data-del-line]").forEach((b) => {
       b.onclick = () => removeTask(parseInt(b.dataset.delLine, 10));
     });
-    const addBtn = $("#btn-add-task");
-    const addInp = $("#inp-new-task");
-    if (addBtn && addInp) {
-      const submit = () => { addTask(addInp.value); addInp.value = ""; };
-      addBtn.onclick = submit;
-      addInp.onkeydown = (e) => { if (e.key === "Enter") submit(); };
-    }
-    const createBtn = $("#btn-create-note");
-    if (createBtn) createBtn.onclick = createTodayNote;
   }
   if (v === "clients") {
     document.querySelectorAll("[data-ctab]").forEach((b) => {
@@ -879,9 +888,22 @@ addEventListener("scroll", () => {
   lastY = y;
 }, { passive: true });
 
+/* ---------- task composer ---------- */
+
+function openComposer() {
+  if (state.busy) return;
+  $("#composer").classList.remove("hidden");
+  $("#composer-text").focus();
+}
+function closeComposer() {
+  $("#composer").classList.add("hidden");
+  $("#composer-text").value = "";
+}
+
 /* ---------- boot ---------- */
 
 document.querySelectorAll(".tab").forEach((b) => {
+  b.querySelector(".ticon").innerHTML = icon(b.dataset.icon);
   b.onclick = () => {
     state.view = b.dataset.view;
     state.article = null;
@@ -891,9 +913,20 @@ document.querySelectorAll(".tab").forEach((b) => {
     scrollTo(0, 0);
   };
 });
+$("#btn-refresh").innerHTML = icon("refresh", 17);
 $("#btn-refresh").onclick = () => syncAll();
 $("#btn-theme").onclick = () => {
   setThemePref(effectiveTheme() === "light" ? "dark" : "light");
+};
+
+$("#fab").innerHTML = icon("plus", 24);
+$("#fab").onclick = openComposer;
+$("#composer-cancel").onclick = closeComposer;
+$("#composer").onclick = (e) => { if (e.target.id === "composer") closeComposer(); };
+$("#composer-add").onclick = () => {
+  const texts = $("#composer-text").value.split("\n");
+  closeComposer();
+  addTasks(texts);
 };
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
