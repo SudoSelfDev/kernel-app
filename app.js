@@ -17,6 +17,7 @@ const PATHS = {
   schedule: atob("MjBfTGlmZWxvZy9zY2hlZHVsZS5qc29u"),
   research: atob("MzBfTGlicmFyeS9SZXNlYXJjaA=="),
   masterplan: atob("MTBfUHJvamVjdHMvRGFyU3RyZWFtL21hc3Rlci1wbGFuLm1k"),
+  habits: atob("MjBfTGlmZWxvZy9IYWJpdExvZy5tZA=="),
 };
 
 const LS_TOKEN = "kernel_pat";
@@ -40,7 +41,6 @@ const state = {
 const ICONS = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
   moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
-  refresh: '<path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
   users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   card: '<rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/>',
   book: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
@@ -52,6 +52,7 @@ const ICONS = {
   check: '<polyline points="20 6 9 17 4 12"/>',
   phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
   chevronDown: '<polyline points="6 9 12 15 18 9"/>',
+  checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.27"/>',
 };
 
 const icon = (name, size = 20) =>
@@ -190,7 +191,7 @@ async function syncAll() {
   setSyncStatus("Syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, study, daily, schedule, researchDir, masterplan] = await Promise.all([
+    const [clients, savings, debts, study, daily, schedule, researchDir, masterplan, habits] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
@@ -199,6 +200,7 @@ async function syncAll() {
       fetchRaw(PATHS.schedule, { optional: true }),
       fetchDir(PATHS.research, { optional: true }),
       fetchRaw(PATHS.masterplan, { optional: true }),
+      fetchWithSha(PATHS.habits, { optional: true }),
     ]);
     let articles = [];
     if (Array.isArray(researchDir)) {
@@ -206,7 +208,7 @@ async function syncAll() {
       const texts = await Promise.all(mds.map((f) => fetchRaw(`${PATHS.research}/${f.name}`)));
       articles = mds.map((f, i) => ({ name: f.name, text: texts[i] }));
     }
-    state.files = { clients, savings, debts, study, daily, schedule, articles, masterplan };
+    state.files = { clients, savings, debts, study, daily, schedule, articles, masterplan, habits };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -302,6 +304,87 @@ function addTasks(texts) {
     lines.splice(insert, 0, ...tasks);
   }
   saveDaily(lines.join("\n"), tasks.length === 1 ? "kernel-app: add daily task" : `kernel-app: add ${tasks.length} daily tasks`);
+}
+
+/* ---------- habit writes ---------- */
+
+async function saveHabits(newText, message) {
+  const h = state.files.habits;
+  if (!h) return;
+  const prev = { ...h };
+  state.busy = true;
+  state.files.habits = { text: newText, sha: h.sha };
+  render();
+  try {
+    const sha = await putFile(PATHS.habits, newText, message, h.sha);
+    state.files.habits.sha = sha;
+    state.lastSync = Date.now();
+    saveCache();
+    state.error = null;
+  } catch (e) {
+    state.files.habits = prev;
+    if (e.message === "auth-write") {
+      state.error = "Write rejected — your token needs Contents: Read and write to track habits.";
+    } else if (e.message === "conflict") {
+      state.error = "The habit log changed on GitHub since last sync. Refreshing — try again.";
+      state.busy = false;
+      await syncAll();
+      return;
+    } else {
+      state.error = "Couldn't save — check your connection and try again.";
+    }
+  }
+  state.busy = false;
+  render();
+}
+
+/* flip one habit's ✅ for today in the Log table; creates today's row (and any
+   missing habit columns) as needed */
+function toggleHabit(name) {
+  const h = state.files.habits;
+  if (!h || state.busy) return;
+  const lines = h.text.split("\n");
+
+  const logIdx = lines.findIndex((l) => l.trim().toLowerCase().startsWith("## log"));
+  if (logIdx === -1) return;
+  let head = -1;
+  for (let i = logIdx + 1; i < lines.length; i++) {
+    if (lines[i].trim().startsWith("|")) { head = i; break; }
+    if (/^#+\s/.test(lines[i])) return;
+  }
+  if (head === -1) return;
+
+  const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+  let cols = cells(lines[head]);
+
+  /* habits added to the list since the table was made get a new column */
+  if (!cols.includes(name)) {
+    cols = [...cols, name];
+    lines[head] = `| ${cols.join(" | ")} |`;
+    lines[head + 1] = `|${cols.map(() => "---").join("|")}|`;
+    for (let i = head + 2; i < lines.length && lines[i].trim().startsWith("|"); i++) {
+      lines[i] = `| ${[...cells(lines[i]), "—"].slice(0, cols.length).join(" | ")} |`;
+    }
+  }
+  const col = cols.indexOf(name);
+
+  const iso = todayIso();
+  let rowIdx = -1;
+  for (let i = head + 2; i < lines.length && lines[i].trim().startsWith("|"); i++) {
+    if (cells(lines[i])[0] === iso) { rowIdx = i; break; }
+  }
+
+  if (rowIdx === -1) {
+    const row = cols.map((_, i) => (i === 0 ? iso : i === col ? "✅" : "—"));
+    /* insert right after the header so the newest day reads first */
+    lines.splice(head + 2, 0, `| ${row.join(" | ")} |`);
+  } else {
+    const row = cells(lines[rowIdx]);
+    while (row.length < cols.length) row.push("—");
+    row[col] = row[col].includes("✅") ? "—" : "✅";
+    lines[rowIdx] = `| ${row.join(" | ")} |`;
+  }
+  saveHabits(lines.join("\n"), `kernel-app: habit — ${name}`);
 }
 
 /* ---------- markdown parsing ---------- */
@@ -485,6 +568,16 @@ function buildModel() {
       deadline: kv["Deadline"] || "",
       tracker: parseTable(section(f.savings, "## Progress Tracker")),
     };
+    /* this month's actuals, for the coach card — tracker rows are projections
+       until Nadia logs real numbers (marked with ✓) */
+    const now = new Date();
+    const mShort = now.toLocaleDateString("en-US", { month: "short" });
+    const row = m.savings.tracker.find((r) => {
+      const v = Object.values(r)[0] || "";
+      return v.includes(mShort) && v.includes(String(now.getFullYear()));
+    });
+    const savedCell = row ? Object.values(row)[3] || "" : "";
+    m.savings.monthSaved = savedCell.includes("✓") ? (num(savedCell) || 0) : 0;
   }
 
   if (f.debts) {
@@ -534,6 +627,34 @@ function buildModel() {
           .sort((a, b) => `${a.allDay ? 0 : 1}${a.start || ""}`.localeCompare(`${b.allDay ? 0 : 1}${b.start || ""}`)),
       };
     } catch { /* malformed schedule.json — treat as absent */ }
+  }
+
+  m.habits = null;
+  if (f.habits && typeof f.habits.text === "string") {
+    const names = section(f.habits.text, "## Habits")
+      .split("\n").map((l) => l.trim())
+      .filter((l) => /^[-*]\s+\S/.test(l))
+      .map((l) => l.replace(/^[-*]\s+/, ""));
+    const rows = parseTable(section(f.habits.text, "## Log"));
+    const byDate = {};
+    rows.forEach((r) => { if (r.Date) byDate[r.Date] = r; });
+    const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    m.habits = names.map((name) => {
+      const week = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        week.push(!!(byDate[iso(d)] && (byDate[iso(d)][name] || "").includes("✅")));
+      }
+      const doneToday = week[6];
+      /* streak counts back from today, or from yesterday if today isn't ticked yet */
+      let streak = 0;
+      for (let i = doneToday ? 0 : 1; ; i++) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        if (byDate[iso(d)] && (byDate[iso(d)][name] || "").includes("✅")) streak++;
+        else break;
+      }
+      return { name, doneToday, streak, week };
+    });
   }
 
   m.scripts = [];
@@ -657,10 +778,19 @@ function renderToday(m) {
   const pct = s.current && s.target ? Math.min(100, (s.current / s.target) * 100) : 0;
   const renewals = [...m.active].filter((c) => c.days !== null).sort((a, b) => a.days - b.days);
   const next = renewals[0];
-  const unpaid = m.active.filter((c) => (c.Status || "").includes("⚠")).length;
-  const trials = m.leads.filter((c) => (c.Status || "").includes("🔵")).length;
-  const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
   const dis = state.busy ? "disabled" : "";
+
+  const open = m.tasks ? m.tasks.filter((t) => !t.done).length : 0;
+  const heroSub = m.tasks === null ? "No daily note yet"
+    : open === 0 ? "All tasks done" : `${open} task${open === 1 ? "" : "s"} remaining`;
+
+  /* coach card — the accountability line up top */
+  const monthly = s.monthly || 5500;
+  const remaining = Math.max(0, monthly - (s.monthSaved || 0));
+  const coachMsg = remaining === 0
+    ? `Monthly target hit — ${monthly.toLocaleString()} MAD saved. Keep going.`
+    : `Save ${remaining.toLocaleString()} MAD${s.monthSaved ? " more" : ""} this month to stay on track`;
 
   const tasksHtml = m.tasks === null
     ? `<div class="empty">No daily note yet today — tap + to start one</div>`
@@ -692,9 +822,21 @@ function renderToday(m) {
     }).join("");
   }
 
+  const nextTone = !next ? "dim" : next.days <= 7 ? "bad" : next.days <= 30 ? "warn" : "ok";
+
   return `
+  <div class="hero">
+    <div class="hero-date">${esc(dateStr)}</div>
+    <div class="hero-sub">${esc(heroSub)}${state.busy ? " · saving…" : ""}</div>
+  </div>
+
+  <div class="coach">
+    <div class="coach-text">${esc(coachMsg)}</div>
+    <div class="coach-val">${pct.toFixed(0)}%<small>of ${s.target ? Math.round(s.target / 1000) : 50}K goal</small></div>
+  </div>
+
   <div class="card">
-    <h2>${esc(dateStr)} ${state.busy ? `<span class="h-extra muted">saving…</span>` : ""}</h2>
+    <h2>Tasks</h2>
     ${tasksHtml}
   </div>
 
@@ -703,32 +845,18 @@ function renderToday(m) {
     ${scheduleHtml}
   </div>
 
-  ${m.study ? `
-  <div class="card">
-    <h2>Cloud Study</h2>
-    <div class="row">
-      <div class="r-main"><div class="r-title">${esc(m.study.title)}</div>
-      <div class="r-sub">${m.study.done}/${m.study.total} checklist items done</div></div>
-      <div class="r-end"><span class="chip ${m.study.done > 0 ? "ok" : "dim"}">${m.study.total ? Math.round((m.study.done / m.study.total) * 100) : 0}%</span></div>
+  <div class="duo">
+    ${m.study ? `
+    <div class="card duo-tile">
+      <h2>Cloud study</h2>
+      <div class="duo-val">${m.study.done}/${m.study.total}</div>
+      <div class="duo-sub">${esc(m.study.title)} · ${m.study.total ? Math.round((m.study.done / m.study.total) * 100) : 0}%</div>
+    </div>` : ""}
+    <div class="card duo-tile">
+      <h2>Next renewal</h2>
+      <div class="duo-val t-${nextTone}">${next ? (next.days < 0 ? `${-next.days}d ago` : `${next.days}d`) : "—"}</div>
+      <div class="duo-sub">${next ? `${esc((next.Name || "").split(" ").pop())} · ${esc(next.Expiry || "")}` : "no expiry dates"}</div>
     </div>
-  </div>` : ""}
-
-  <div class="card">
-    <h2>Clients</h2>
-    <div class="row">
-      <div class="r-main"><div class="r-title">${m.active.length} active</div>
-      <div class="r-sub">${unpaid} unpaid · ${trials} on trial</div></div>
-      <div class="r-end">${next ? expiryChip(next.days) : ""}</div>
-    </div>
-    ${next ? `<div class="row"><div class="r-main"><div class="r-title">Next renewal: ${esc(next.Name)}</div>
-      <div class="r-sub">${esc(next.Expiry)} · ${esc(next.Plan || "")} · ${esc(next.Price || "")}</div></div></div>` : ""}
-  </div>
-
-  <div class="card">
-    <h2>Savings <span class="h-extra muted">target ${s.target ? s.target.toLocaleString() : "—"} MAD</span></h2>
-    <div class="big-number">${s.current ? s.current.toLocaleString() : "—"} <small>MAD</small></div>
-    <div class="bar"><div style="width:${pct}%"></div></div>
-    <div class="bar-sub"><span>${pct.toFixed(0)}%</span><span>monthly target: ${s.monthly ? s.monthly.toLocaleString() : "—"} MAD</span></div>
   </div>`;
 }
 
@@ -736,6 +864,13 @@ function renderToday(m) {
 function clientsSorted(m, tab) {
   const list = tab === "active" ? m.active : tab === "leads" ? m.leads : m.churned;
   return tab === "active" ? [...list].sort((a, b) => (a.days ?? 9e9) - (b.days ?? 9e9)) : list;
+}
+
+/* "1M" / "6M" / "1Y" → plan length in days, for the time-used bar */
+function planDays(plan) {
+  const m = String(plan || "").match(/(\d+)\s*([MY])/i);
+  if (!m) return null;
+  return parseInt(m[1], 10) * (m[2].toUpperCase() === "Y" ? 365 : 30);
 }
 
 function clientCard(c, kind, key) {
@@ -746,21 +881,37 @@ function clientCard(c, kind, key) {
     : kind === "churned" ? true : false;
   const chip = isNorm ? "" : `<span class="chip ${cls}">${esc(label)}</span>`;
 
-  /* active cards lead with the countdown: big day number + traffic-light dot */
-  let end = chip;
+  const badgeTxt = kind === "active"
+    ? [cval(c.App), cval(c.Plan)].filter(Boolean).join(" · ")
+    : cval(c.App);
+  const badge = badgeTxt ? `<span class="cc-badge">${esc(badgeTxt)}</span>` : "";
+
+  let right, bar = "";
   if (kind === "active") {
     const d = c.days;
     const tone = d === null ? "dim" : d <= 7 ? "bad" : d <= 30 ? "warn" : "ok";
-    end = `${chip}<span class="cc-days t-${tone}">${d === null ? "—" : d < 0 ? `${-d}d ago` : `${d}d`}<span class="dot"></span></span>`;
+    right = `${badge}${chip}<span class="cc-days t-${tone}">${d === null ? "—" : d < 0 ? `${-d}d ago` : `${d}d`}</span>`;
+    const total = planDays(c.Plan);
+    if (total && d !== null) {
+      const used = Math.min(100, Math.max(2, (1 - d / total) * 100));
+      bar = `<div class="sub-bar"><div class="sub-bar-fill t-${tone}" style="width:${used.toFixed(0)}%"></div></div>`;
+    }
+  } else if (kind === "leads") {
+    right = `${badge}${chip}`;
+  } else {
+    right = `${badge}<span class="cc-date">${esc(cval(c.Date))}</span>`;
   }
 
   return `
   <button class="card client-card" data-client="${esc(key)}">
-    <div class="cc-main">
-      <div class="cc-name">${esc(cval(c.Name) || "—")}</div>
-      <div class="cc-sub">${esc(cval(c.Phone) || "—")}</div>
+    <div class="cc-row">
+      <div class="cc-main">
+        <div class="cc-name">${esc(cval(c.Name) || "—")}</div>
+        <div class="cc-sub">${esc(cval(c.Phone) || "—")}</div>
+      </div>
+      <div class="cc-right">${right}</div>
     </div>
-    <div class="cc-end">${end}</div>
+    ${bar}
   </button>`;
 }
 
@@ -862,17 +1013,29 @@ function renderClients(m) {
 function renderMoney(m) {
   const s = m.savings;
   const pct = s.current && s.target ? Math.min(100, (s.current / s.target) * 100) : 0;
+  const nowM = new Date().toLocaleDateString("en-US", { month: "short" });
+  const nowY = String(new Date().getFullYear());
   const tracker = (s.tracker || []).map((r) => {
     const vals = Object.values(r).map((v) => v.replace(/\*/g, ""));
-    return `<tr><td>${esc(vals[0])}</td><td class="right">${esc(vals[3] || "")}</td><td class="right">${esc(vals[4] || "")}</td><td class="right">${esc(vals[5] || "")}</td></tr>`;
+    const month = vals[0] || "";
+    /* rows without ✓ are Nadia's projections, not actuals */
+    const isActual = (vals[3] || "").includes("✓");
+    const isCurrent = month.includes(nowM) && month.includes(nowY);
+    const clean = (v) => esc((v || "").replace(/✓/g, "").trim());
+    return `<tr class="${isCurrent ? "tr-current" : ""}${!isActual && !isCurrent ? " tr-proj" : ""}">
+      <td>${clean(month)}${isCurrent ? ` <span class="tr-now">now</span>` : ""}</td>
+      <td class="right">${clean(vals[3])}</td><td class="right">${clean(vals[4])}</td><td class="right">${clean(vals[5])}</td></tr>`;
   }).join("");
+
+  const monthly = s.monthly || 5500;
+  const remaining = Math.max(0, monthly - (s.monthSaved || 0));
 
   return `
   <div class="card">
     <h2>Savings Goal <span class="h-extra muted">${esc(s.deadline.split("(")[0] || "")}</span></h2>
     <div class="big-number">${s.current ? s.current.toLocaleString() : "—"} <small>/ ${s.target ? s.target.toLocaleString() : "—"} MAD</small></div>
     <div class="bar"><div style="width:${pct}%"></div></div>
-    <div class="bar-sub"><span>${pct.toFixed(1)}%</span><span>${esc(s.currentRaw.replace(/^[\d,\s]+MAD\s*/, ""))}</span></div>
+    <div class="bar-sub"><span>${pct.toFixed(1)}%</span><span>${remaining === 0 ? "monthly target hit ✓" : `this month: ${remaining.toLocaleString()} MAD to go`}</span></div>
   </div>
 
   <div class="card locked">
@@ -896,12 +1059,35 @@ function renderMoney(m) {
 
   ${tracker ? `
   <div class="card">
-    <h2>Monthly Tracker</h2>
+    <h2>Monthly Tracker <span class="h-extra muted">faded = projection</span></h2>
     <table class="mini-table">
       <tr><th>Month</th><th class="right">Saved</th><th class="right">Total</th><th class="right">OK?</th></tr>
       ${tracker}
     </table>
   </div>` : ""}`;
+}
+
+function renderHabits(m) {
+  if (!m.habits) {
+    return `<div class="card"><div class="empty">No habit log synced yet — pull to refresh, or check that HabitLog.md exists in the vault</div></div>`;
+  }
+  const done = m.habits.filter((h) => h.doneToday).length;
+  const dis = state.busy ? "disabled" : "";
+  return `
+  <div class="card">
+    <h2>Today <span class="h-extra muted">${done}/${m.habits.length} done${state.busy ? " · saving…" : ""}</span></h2>
+    ${m.habits.length === 0 ? `<div class="empty">No habits in the list — add some to HabitLog.md</div>` : ""}
+    ${m.habits.map((h, i) => `
+      <button class="habit ${h.doneToday ? "done" : ""}" data-habit="${i}" ${dis}>
+        <span class="box">${h.doneToday ? "✓" : ""}</span>
+        <span class="hb-main">
+          <span class="hb-name">${esc(h.name)}</span>
+          <span class="hb-week">${h.week.map((d, j) => `<span class="hb-dot ${d ? "on" : ""} ${j === 6 ? "today" : ""}"></span>`).join("")}</span>
+        </span>
+        <span class="hb-streak ${h.streak > 0 ? "hot" : ""}">${h.streak > 0 ? `${h.streak}🔥` : "—"}</span>
+      </button>`).join("")}
+  </div>
+  <p class="muted" style="font-size:0.75rem;padding:0 4px;">Dots are the last 7 days. Edit the habit list in <code>HabitLog.md</code> — the app adapts on next sync.</p>`;
 }
 
 function renderArticles(m) {
@@ -951,6 +1137,8 @@ function renderSettings() {
     <div class="row"><div class="r-main"><div class="r-title">Last sync</div></div>
     <div class="r-end muted">${state.lastSync ? timeAgo(state.lastSync) : "never"}</div></div>
     <div style="height:10px"></div>
+    <button class="btn" id="btn-sync-now">Sync now</button>
+    <div style="height:8px"></div>
     <button class="btn secondary" id="btn-clear-cache">Clear cached data</button>
     <div style="height:8px"></div>
     <button class="btn danger" id="btn-logout">Forget token &amp; data</button>
@@ -996,8 +1184,12 @@ function render() {
     : v === "clients" ? renderClients(m)
     : v === "money" ? renderMoney(m)
     : v === "articles" ? renderArticles(m)
+    : v === "habits" ? renderHabits(m)
     : renderSettings();
   $("#view").innerHTML = html;
+
+  /* settings has no tab — opening it via the gear clears the bar */
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === v));
 
   /* the floating add button only makes sense on Today */
   $("#fab").classList.toggle("hidden", v !== "today");
@@ -1025,6 +1217,11 @@ function render() {
     });
   }
   updateClientSheet(m);
+  if (v === "habits" && m.habits) {
+    document.querySelectorAll("[data-habit]").forEach((b) => {
+      b.onclick = () => { const h = m.habits[parseInt(b.dataset.habit, 10)]; if (h) toggleHabit(h.name); };
+    });
+  }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
       b.onclick = () => { state.article = b.dataset.article; showBars(); render(); scrollTo(0, 0); };
@@ -1040,6 +1237,7 @@ function render() {
       const t = $("#inp-token").value.trim();
       if (t) { setToken(t); syncAll(); }
     };
+    $("#btn-sync-now").onclick = () => syncAll();
     $("#btn-clear-cache").onclick = () => { localStorage.removeItem(LS_CACHE); state.files = {}; state.lastSync = null; syncAll(); };
     $("#btn-logout").onclick = () => { localStorage.clear(); state.files = {}; state.lastSync = null; render(); };
   }
@@ -1081,14 +1279,19 @@ document.querySelectorAll(".tab").forEach((b) => {
   b.onclick = () => {
     state.view = b.dataset.view;
     state.article = null;
-    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === b));
     showBars();
     render();
     scrollTo(0, 0);
   };
 });
-$("#btn-refresh").innerHTML = icon("refresh", 17);
-$("#btn-refresh").onclick = () => syncAll();
+$("#btn-settings").innerHTML = icon("gear", 17);
+$("#btn-settings").onclick = () => {
+  state.view = "settings";
+  state.article = null;
+  showBars();
+  render();
+  scrollTo(0, 0);
+};
 $("#btn-theme").onclick = () => {
   setThemePref(effectiveTheme() === "light" ? "dark" : "light");
 };

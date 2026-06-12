@@ -252,29 +252,63 @@ input::placeholder { color: var(--muted); }
   border: 1px solid var(--danger-border);
   border-radius: var(--radius); padding: 12px 14px; font-size: 0.85rem;
 }
+/* ---------- today — hero / coach / duo tiles ---------- */
+
+.hero { padding: 6px 2px 0; }
+.hero-date { font-size: 1.55rem; font-weight: 800; line-height: 1.1; }
+.hero-sub { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
+
+.coach {
+  background: var(--accent); color: var(--btn-fg);
+  border-radius: var(--radius); padding: 14px 16px;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+}
+.coach-text { font-size: 0.9rem; font-weight: 650; line-height: 1.4; }
+.coach-val { font-size: 1.5rem; font-weight: 800; text-align: right; flex-shrink: 0; line-height: 1.1; }
+.coach-val small { font-size: 0.66rem; font-weight: 500; display: block; opacity: 0.75; }
+
+.duo { display: flex; gap: 10px; }
+.duo-tile { flex: 1; min-width: 0; }
+.duo-val { font-size: 1.2rem; font-weight: 750; }
+.duo-val.t-bad { color: var(--red); }
+.duo-val.t-warn { color: var(--amber); }
+.duo-val.t-ok { color: var(--accent); }
+.duo-sub { font-size: 0.72rem; color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ---------- clients — cards + detail sheet ---------- */
 
 .client-card {
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  width: 100%; text-align: left; cursor: pointer;
+  display: block; width: 100%; text-align: left; cursor: pointer;
   color: var(--text); font-family: inherit;
   padding: 13px 14px;
 }
 .client-card:active { background: var(--surface2); }
+.cc-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .cc-main { min-width: 0; }
 .cc-name { font-size: 0.95rem; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-sub { font-size: 0.76rem; color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cc-end { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.cc-days {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 0.95rem; font-weight: 650; font-variant-numeric: tabular-nums;
+.cc-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.cc-badge {
+  font-size: 0.68rem; color: var(--muted); white-space: nowrap;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 8px;
 }
-.cc-days .dot { width: 9px; height: 9px; border-radius: 50%; }
-.cc-days.t-ok .dot   { background: var(--accent); }
-.cc-days.t-warn .dot { background: var(--amber); }
-.cc-days.t-bad .dot  { background: var(--red); }
-.cc-days.t-dim .dot  { background: var(--muted); }
-.cc-days.t-bad { color: var(--red); }
+.cc-date { font-size: 0.74rem; color: var(--muted); }
+.cc-days {
+  font-size: 1.02rem; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+.cc-days.t-ok   { color: var(--accent); }
+.cc-days.t-warn { color: var(--amber); }
+.cc-days.t-bad  { color: var(--red); }
+.cc-days.t-dim  { color: var(--muted); }
+
+/* how much of the plan is used up */
+.sub-bar { height: 4px; background: var(--surface2); border-radius: 3px; overflow: hidden; margin-top: 10px; }
+.sub-bar-fill { height: 100%; border-radius: 3px; }
+.sub-bar-fill.t-ok   { background: var(--accent); }
+.sub-bar-fill.t-warn { background: var(--amber); }
+.sub-bar-fill.t-bad  { background: var(--red); }
+.sub-bar-fill.t-dim  { background: var(--muted); }
 
 .caret { color: var(--muted); display: flex; transition: transform 0.2s ease; }
 .scripts.open .caret { transform: rotate(180deg); }
@@ -378,10 +412,44 @@ input::placeholder { color: var(--muted); }
 }
 .md-box.checked { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 
+/* ---------- habits ---------- */
+
+.habit {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 10px 4px; text-align: left;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); cursor: pointer; border-radius: 8px; font-family: inherit;
+}
+.habit:last-of-type { border-bottom: none; }
+.habit:active { background: var(--surface2); }
+.habit[disabled] { opacity: 0.5; }
+.habit .box {
+  flex-shrink: 0; width: 21px; height: 21px;
+  border: 1.5px solid var(--muted); border-radius: 7px;
+  text-align: center; line-height: 19px; font-size: 13px;
+}
+.habit.done .box { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.hb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.hb-name { font-size: 0.92rem; font-weight: 600; }
+.habit.done .hb-name { color: var(--muted); }
+.hb-week { display: flex; gap: 4px; }
+.hb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--border); }
+.hb-dot.on { background: var(--accent); border-color: var(--accent); }
+.hb-dot.today:not(.on) { border-color: var(--muted); }
+.hb-streak { flex-shrink: 0; font-size: 0.82rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.hb-streak.hot { color: var(--amber); }
+
 .mini-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 .mini-table th { color: var(--muted); text-align: left; font-weight: 500; padding: 6px 4px; border-bottom: 1px solid var(--border); }
 .mini-table td { padding: 7px 4px; border-bottom: 1px solid var(--border); }
 .mini-table tr:last-child td { border-bottom: none; }
+.mini-table .tr-proj td { color: var(--muted); opacity: 0.65; }
+.mini-table .tr-current td { font-weight: 700; }
+.tr-now {
+  font-size: 0.62rem; font-weight: 700; color: var(--accent);
+  background: var(--accent-dim); border-radius: 999px; padding: 1px 6px;
+  vertical-align: 1px;
+}
 .right { text-align: right; }
 .muted { color: var(--muted); }
 .locked { opacity: 0.8; }
