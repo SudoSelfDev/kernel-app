@@ -62,7 +62,7 @@ html, body {
 }
 body.bars-hidden #topbar { transform: translateY(-110%); opacity: 0; }
 .brand { font-weight: 700; font-size: 1.05rem; letter-spacing: 0.02em; }
-.sync-status { flex: 1; font-size: 0.72rem; color: var(--muted); text-align: right; }
+.sync-status { flex: 1; font-size: 0.78rem; font-weight: 600; color: var(--muted); text-align: right; }
 .icon-btn {
   background: var(--surface); color: var(--text);
   border: 1px solid var(--border); border-radius: 10px;

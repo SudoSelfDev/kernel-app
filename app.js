@@ -187,7 +187,7 @@ const todayIso = () => {
 
 async function syncAll() {
   if (!getToken()) return;
-  setSyncStatus("syncing…");
+  setSyncStatus("Syncing…");
   state.error = null;
   try {
     const [clients, savings, debts, study, daily, schedule, researchDir, masterplan] = await Promise.all([
@@ -580,7 +580,7 @@ const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function setSyncStatus(txt) {
-  $("#sync-status").textContent = txt ?? (state.lastSync ? `synced ${timeAgo(state.lastSync)}` : "");
+  $("#sync-status").textContent = txt ?? (state.lastSync ? `Synced ${timeAgo(state.lastSync)}` : "");
 }
 function timeAgo(t) {
   const s = Math.round((Date.now() - t) / 1000);
@@ -741,12 +741,6 @@ function clientsSorted(m, tab) {
 function clientCard(c, kind, key) {
   const [cls, label] = statusChip(c.Status);
 
-  /* sub line under the name */
-  let sub;
-  if (kind === "churned") sub = `${esc(cval(c.App) || "—")} · ${esc(cval(c.Date) || "")}`;
-  else if (kind === "leads") sub = `${esc(cval(c.App) || "—")} · trial ${esc(cval(c["Trial Start"]) || "—")}`;
-  else sub = `${esc(cval(c.App) || "—")}${cval(c.Plan) ? ` · ${esc(c.Plan)}` : ""}`;
-
   /* status chips only as exceptions — ✅ Active / 🔴 Churned are the tab's norm */
   const isNorm = kind === "active" ? (c.Status || "").includes("✅")
     : kind === "churned" ? true : false;
@@ -764,7 +758,7 @@ function clientCard(c, kind, key) {
   <button class="card client-card" data-client="${esc(key)}">
     <div class="cc-main">
       <div class="cc-name">${esc(cval(c.Name) || "—")}</div>
-      <div class="cc-sub">${sub}</div>
+      <div class="cc-sub">${esc(cval(c.Phone) || "—")}</div>
     </div>
     <div class="cc-end">${end}</div>
   </button>`;
