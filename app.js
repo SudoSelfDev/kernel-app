@@ -638,14 +638,14 @@ function m3uLink(dns, user, pass) {
 /* the ready-to-send credentials block — what Copy login puts on the clipboard */
 function buildLoginMsg(c) {
   const dns = cval(c.DNS), user = cval(c.Username), pass = cval(c.Password);
-  const L = ["📺 DarStream — Vos identifiants", ""];
+  const L = ["📺 DarStream — Your login", ""];
   if (dns) L.push(`🔗 URL: ${dns}`);
-  if (user) L.push(`👤 Utilisateur: ${user}`);
-  if (pass) L.push(`🔑 Mot de passe: ${pass}`);
+  if (user) L.push(`👤 Username: ${user}`);
+  if (pass) L.push(`🔑 Password: ${pass}`);
   const smart = dns ? smartTvDns(dns) : "";
   if (smart) L.push("", "📱 Samsung / LG (IPTV Smarters):", smart);
   const m3u = m3uLink(dns, user, pass);
-  if (m3u) L.push("", "📦 Lien M3U (VLC, etc.) :", m3u);
+  if (m3u) L.push("", "📦 M3U link (VLC, etc.):", m3u);
   return L.join("\n");
 }
 
