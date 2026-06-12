@@ -252,31 +252,41 @@ input::placeholder { color: var(--muted); }
   border: 1px solid var(--danger-border);
   border-radius: var(--radius); padding: 12px 14px; font-size: 0.85rem;
 }
-/* ---------- clients — expandable rows ---------- */
+/* ---------- clients — cards + detail sheet ---------- */
 
-.client-list { padding: 0 14px; }
-.client { border-bottom: 1px solid var(--border); }
-.client:last-child { border-bottom: none; }
-
-.client-head {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  width: 100%; padding: 11px 0; text-align: left;
-  background: none; border: none; color: var(--text);
-  cursor: pointer; font-family: inherit; border-radius: 8px;
+.client-card {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  width: 100%; text-align: left; cursor: pointer;
+  color: var(--text); font-family: inherit;
+  padding: 13px 14px;
 }
-.client-head:active { background: var(--surface2); }
-.client-head .r-main { min-width: 0; }
-.client-head .r-title { font-size: 0.92rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.client-head .r-sub { font-size: 0.75rem; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.client-head .r-end { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.client-card:active { background: var(--surface2); }
+.cc-main { min-width: 0; }
+.cc-name { font-size: 0.95rem; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-sub { font-size: 0.76rem; color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-end { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.cc-days {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 0.95rem; font-weight: 650; font-variant-numeric: tabular-nums;
+}
+.cc-days .dot { width: 9px; height: 9px; border-radius: 50%; }
+.cc-days.t-ok .dot   { background: var(--accent); }
+.cc-days.t-warn .dot { background: var(--amber); }
+.cc-days.t-bad .dot  { background: var(--red); }
+.cc-days.t-dim .dot  { background: var(--muted); }
+.cc-days.t-bad { color: var(--red); }
 
 .caret { color: var(--muted); display: flex; transition: transform 0.2s ease; }
-.client.open .caret, .scripts.open .caret { transform: rotate(180deg); }
+.scripts.open .caret { transform: rotate(180deg); }
 
-.client-detail {
-  display: flex; flex-direction: column; gap: 1px;
-  padding: 2px 0 12px;
-}
+/* client detail sheet */
+.client-sheet { gap: 12px; max-height: 82vh; overflow-y: auto; }
+.cs-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.cs-head h3 { font-size: 1.1rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-meta { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.cs-fields { display: flex; flex-direction: column; gap: 4px; }
+.cs-call { display: flex; align-items: center; justify-content: center; gap: 7px; text-decoration: none; }
+
 .cd-row {
   display: flex; align-items: center; gap: 10px;
   width: 100%; padding: 8px 10px; text-align: left;
@@ -288,9 +298,8 @@ input::placeholder { color: var(--muted); }
 .cd-v { flex: 1; min-width: 0; font-size: 0.85rem; overflow-wrap: anywhere; }
 .cd-v.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; }
 .cd-ic { flex-shrink: 0; color: var(--muted); display: flex; }
-.cd-call .cd-ic { color: var(--blue); }
 
-.copy-login { margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 7px; }
+.copy-login { display: flex; align-items: center; justify-content: center; gap: 7px; }
 
 /* collapsible card header (DM Scripts) */
 .card-head {

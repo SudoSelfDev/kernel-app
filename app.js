@@ -613,14 +613,6 @@ function expiryChip(days) {
   return `<span class="chip ok">${days}d left</span>`;
 }
 
-/* compact expiry chip for the collapsed client row — just the day count */
-function expiryMerged(c) {
-  const d = c.days;
-  if (d === null || d === undefined) return `<span class="chip dim">no date</span>`;
-  const cls = d < 0 ? "bad" : d <= 7 ? "bad" : d <= 30 ? "warn" : "ok";
-  return `<span class="chip ${cls}">${d < 0 ? `exp ${-d}d` : `${d}d`}</span>`;
-}
-
 /* treat em-dash / blank as "no value" */
 const cval = (x) => { const s = String(x ?? "").trim(); return (!s || s === "—") ? "" : s; };
 
@@ -740,50 +732,102 @@ function renderToday(m) {
   </div>`;
 }
 
-function clientCard(c, kind, key, open) {
+/* the order the cards render in — the sheet looks clients up by index in this list */
+function clientsSorted(m, tab) {
+  const list = tab === "active" ? m.active : tab === "leads" ? m.leads : m.churned;
+  return tab === "active" ? [...list].sort((a, b) => (a.days ?? 9e9) - (b.days ?? 9e9)) : list;
+}
+
+function clientCard(c, kind, key) {
   const [cls, label] = statusChip(c.Status);
-  const phone = (c.Phone || "").replace(/[^+\d]/g, "");
 
   /* sub line under the name */
   let sub;
   if (kind === "churned") sub = `${esc(cval(c.App) || "—")} · ${esc(cval(c.Date) || "")}`;
   else if (kind === "leads") sub = `${esc(cval(c.App) || "—")} · trial ${esc(cval(c["Trial Start"]) || "—")}`;
-  else sub = `${esc(cval(c.App) || "—")}${cval(c.Plan) ? ` · ${esc(c.Plan)}` : ""}${cval(c.Price) ? ` ${esc(c.Price)}` : ""}`;
+  else sub = `${esc(cval(c.App) || "—")}${cval(c.Plan) ? ` · ${esc(c.Plan)}` : ""}`;
 
-  /* status chips show only when they're an exception — ✅ Active and 🔴 Churned are the
-     expected norm for their tab, so we drop them and let expiry / the tab speak */
+  /* status chips only as exceptions — ✅ Active / 🔴 Churned are the tab's norm */
   const isNorm = kind === "active" ? (c.Status || "").includes("✅")
     : kind === "churned" ? true : false;
   const chip = isNorm ? "" : `<span class="chip ${cls}">${esc(label)}</span>`;
-  const right = kind === "active" ? `${chip}${expiryMerged(c)}` : chip;
 
+  /* active cards lead with the countdown: big day number + traffic-light dot */
+  let end = chip;
+  if (kind === "active") {
+    const d = c.days;
+    const tone = d === null ? "dim" : d <= 7 ? "bad" : d <= 30 ? "warn" : "ok";
+    end = `${chip}<span class="cc-days t-${tone}">${d === null ? "—" : d < 0 ? `${-d}d ago` : `${d}d`}<span class="dot"></span></span>`;
+  }
+
+  return `
+  <button class="card client-card" data-client="${esc(key)}">
+    <div class="cc-main">
+      <div class="cc-name">${esc(cval(c.Name) || "—")}</div>
+      <div class="cc-sub">${sub}</div>
+    </div>
+    <div class="cc-end">${end}</div>
+  </button>`;
+}
+
+/* bottom sheet with the full client record — fields are tap-to-copy */
+function clientSheetHtml(c, kind) {
+  const [cls, label] = statusChip(c.Status);
+  const phone = (c.Phone || "").replace(/[^+\d]/g, "");
   const hasLogin = !!cval(c.Username) && (!!cval(c.DNS) || !!cval(c.Password));
-  const detail = `
-    <div class="client-detail">
-      ${phone ? `<a class="cd-row cd-call" href="tel:${phone}">
-        <span class="cd-k">Call</span><span class="cd-v mono">${esc(cval(c.Phone))}</span>
-        <span class="cd-ic">${icon("phone", 14)}</span></a>` : ""}
+  const meta = kind === "active"
+    ? `<span class="chip ${cls}">${esc(label)}</span>${expiryChip(c.days)}`
+    : `<span class="chip ${cls}">${esc(label)}</span>`;
+  return `
+  <div class="sheet client-sheet">
+    <div class="cs-head">
+      <h3>${esc(cval(c.Name) || "—")}</h3>
+      <div class="cs-meta">${meta}</div>
+    </div>
+    <div class="cs-fields">
+      ${cdField("Phone", c.Phone, true)}
+      ${cdField("App", c.App)}
       ${kind !== "churned" ? cdField("Expiry", c.Expiry) : ""}
+      ${kind === "active" ? cdField("Plan", [cval(c.Plan), cval(c.Price)].filter(Boolean).join(" · ")) : ""}
       ${cdField("DNS", c.DNS, true)}
       ${cdField("Username", c.Username, true)}
       ${cdField("Password", c.Password, true)}
       ${cdField("MAC", c["MAC Address"], true)}
+      ${kind === "churned" ? cdField("Date", c.Date) : ""}
       ${kind === "churned" ? cdField("Reason", c.Reason) : ""}
+      ${kind === "leads" ? cdField("Trial start", c["Trial Start"]) : ""}
       ${cdField("Notes", c.Notes)}
-      ${hasLogin ? `<button class="btn copy-login" data-login="${b64encode(buildLoginMsg(c))}">${icon("copy", 15)} Copy login to send</button>` : ""}
-    </div>`;
-
-  return `
-  <div class="client${open ? " open" : ""}">
-    <button class="client-head" data-client="${esc(key)}">
-      <div class="r-main">
-        <div class="r-title">${esc(cval(c.Name) || "—")}</div>
-        <div class="r-sub">${phone ? `${esc(c.Phone)} · ` : ""}${sub}</div>
-      </div>
-      <div class="r-end">${right}<span class="caret">${icon("chevronDown", 16)}</span></div>
-    </button>
-    ${open ? detail : ""}
+    </div>
+    <div class="sheet-actions">
+      ${phone ? `<a class="btn secondary cs-call" href="tel:${phone}">${icon("phone", 15)} Call</a>` : ""}
+      ${hasLogin ? `<button class="btn copy-login" data-login="${b64encode(buildLoginMsg(c))}">${icon("copy", 15)} Copy login</button>` : ""}
+    </div>
   </div>`;
+}
+
+function updateClientSheet(m) {
+  const el = $("#client-sheet");
+  const key = state.view === "clients" ? state.openClient : null;
+  if (!key) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  const i = key.lastIndexOf(":");
+  const c = clientsSorted(m, key.slice(0, i))[parseInt(key.slice(i + 1), 10)];
+  if (!c) { state.openClient = null; el.classList.add("hidden"); el.innerHTML = ""; return; }
+  el.innerHTML = clientSheetHtml(c, key.slice(0, i));
+  el.classList.remove("hidden");
+  el.onclick = (e) => { if (e.target === el) { state.openClient = null; render(); } };
+  el.querySelectorAll(".cd-row[data-copy]").forEach((r) => {
+    r.onclick = () => copySwap(r.querySelector(".cd-ic"), 14, r.dataset.copy);
+  });
+  el.querySelectorAll("[data-login]").forEach((b) => {
+    b.onclick = () => {
+      copyToClipboard(b64decode(b.dataset.login)).then((ok) => {
+        if (!ok) return;
+        const orig = b.innerHTML;
+        b.innerHTML = `${icon("check", 15)} Copied`;
+        setTimeout(() => { if (document.body.contains(b)) b.innerHTML = orig; }, 1300);
+      });
+    };
+  });
 }
 
 function scriptsCard(m) {
@@ -807,19 +851,16 @@ function scriptsCard(m) {
 
 function renderClients(m) {
   const tab = state.clientTab;
-  const list = tab === "active" ? m.active : tab === "leads" ? m.leads : m.churned;
-  const sorted = tab === "active" ? [...list].sort((a, b) => (a.days ?? 9e9) - (b.days ?? 9e9)) : list;
+  const sorted = clientsSorted(m, tab);
   return `
   <div class="seg">
     <button data-ctab="active" class="${tab === "active" ? "active" : ""}">Active (${m.active.length})</button>
     <button data-ctab="leads" class="${tab === "leads" ? "active" : ""}">Leads (${m.leads.length})</button>
     <button data-ctab="churned" class="${tab === "churned" ? "active" : ""}">Churned (${m.churned.length})</button>
   </div>
-  <div class="card client-list">
-    ${sorted.length
-      ? sorted.map((c, i) => clientCard(c, tab, `${tab}:${i}`, state.openClient === `${tab}:${i}`)).join("")
-      : `<div class="empty">Nothing here</div>`}
-  </div>
+  ${sorted.length
+    ? sorted.map((c, i) => clientCard(c, tab, `${tab}:${i}`)).join("")
+    : `<div class="card"><div class="empty">Nothing here</div></div>`}
 
   ${m.scripts.length ? scriptsCard(m) : ""}`;
 }
@@ -981,25 +1022,7 @@ function render() {
       b.onclick = () => { state.clientTab = b.dataset.ctab; state.openClient = null; render(); };
     });
     document.querySelectorAll("[data-client]").forEach((b) => {
-      b.onclick = () => {
-        const k = b.dataset.client;
-        state.openClient = state.openClient === k ? null : k;
-        render();
-      };
-    });
-    document.querySelectorAll(".cd-row[data-copy]").forEach((el) => {
-      el.onclick = (e) => { e.stopPropagation(); copySwap(el.querySelector(".cd-ic"), 14, el.dataset.copy); };
-    });
-    document.querySelectorAll("[data-login]").forEach((b) => {
-      b.onclick = (e) => {
-        e.stopPropagation();
-        copyToClipboard(b64decode(b.dataset.login)).then((ok) => {
-          if (!ok) return;
-          const orig = b.innerHTML;
-          b.innerHTML = `${icon("check", 15)} Copied`;
-          setTimeout(() => { if (document.body.contains(b)) b.innerHTML = orig; }, 1300);
-        });
-      };
+      b.onclick = () => { state.openClient = b.dataset.client; render(); };
     });
     const st = $("#scripts-toggle");
     if (st) st.onclick = () => { state.scriptsOpen = !state.scriptsOpen; render(); };
@@ -1007,6 +1030,7 @@ function render() {
       b.onclick = () => copySwap(b.querySelector(".script-copy"), 16, m.scripts[parseInt(b.dataset.script, 10)]?.text);
     });
   }
+  updateClientSheet(m);
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
       b.onclick = () => { state.article = b.dataset.article; showBars(); render(); scrollTo(0, 0); };
