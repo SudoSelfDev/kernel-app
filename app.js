@@ -927,6 +927,17 @@ function clientsSorted(m, tab) {
   return tab === "active" ? [...list].sort((a, b) => (a.days ?? 9e9) - (b.days ?? 9e9)) : list;
 }
 
+/* "1M" / "6M" / "1Y" → human label for the client badge */
+function planLabel(plan) {
+  const m = String(plan || "").match(/(\d+)\s*([MY])/i);
+  if (!m) return plan || "";
+  const n = parseInt(m[1], 10);
+  const unit = m[2].toUpperCase() === "Y"
+    ? (n === 1 ? "Year" : "Years")
+    : (n === 1 ? "Month" : "Months");
+  return `${n} ${unit}`;
+}
+
 /* "1M" / "6M" / "1Y" → plan length in days, for the time-used bar */
 function planDays(plan) {
   const m = String(plan || "").match(/(\d+)\s*([MY])/i);
@@ -943,7 +954,7 @@ function clientCard(c, kind, key) {
   const chip = isNorm ? "" : `<span class="chip ${cls}">${esc(label)}</span>`;
 
   const badgeTxt = kind === "active"
-    ? [cval(c.App), cval(c.Plan)].filter(Boolean).join(" · ")
+    ? [cval(c.App), planLabel(cval(c.Plan))].filter(Boolean).join(" · ")
     : cval(c.App);
   const badge = badgeTxt ? `<span class="cc-badge">${esc(badgeTxt)}</span>` : "";
 
