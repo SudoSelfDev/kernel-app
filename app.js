@@ -34,7 +34,13 @@ const state = {
   lastSync: null,
   error: null,
   busy: false,        // a write is in flight
+  habitsEdit: false,  // edit mode for habit list
+  addingHabit: false, // inline add-habit form open
 };
+
+let _dailyTimer = null;
+let _habitTimer = null;
+const SAVE_DELAY = 2000;
 
 /* ---------- icons (feather-style, stroke = currentColor) ---------- */
 
@@ -188,6 +194,8 @@ const todayIso = () => {
 
 async function syncAll() {
   if (!getToken()) return;
+  if (_dailyTimer) { clearTimeout(_dailyTimer); _dailyTimer = null; }
+  if (_habitTimer) { clearTimeout(_habitTimer); _habitTimer = null; }
   setSyncStatus("Syncing…");
   state.error = null;
   try {
@@ -221,20 +229,26 @@ async function syncAll() {
 
 /* ---------- daily-task writes ---------- */
 
-async function saveDaily(newText, message) {
+function applyDailyChange(newText) {
+  state.files.daily = { text: newText, sha: state.files.daily?.sha ?? null };
+  render();
+  if (_dailyTimer) clearTimeout(_dailyTimer);
+  _dailyTimer = setTimeout(flushDaily, SAVE_DELAY);
+}
+
+async function flushDaily() {
+  _dailyTimer = null;
   const d = state.files.daily;
-  const prev = d ? { ...d } : null;
+  if (!d) return;
   state.busy = true;
-  state.files.daily = { text: newText, sha: d ? d.sha : null };
   render();
   try {
-    const sha = await putFile(todayNotePath(), newText, message, d ? d.sha : undefined);
+    const sha = await putFile(todayNotePath(), d.text, "kernel-app: update daily tasks", d.sha ?? undefined);
     state.files.daily.sha = sha;
     state.lastSync = Date.now();
     saveCache();
     state.error = null;
   } catch (e) {
-    state.files.daily = prev;
     if (e.message === "auth-write") {
       state.error = "Write rejected — your token needs Contents: Read and write to edit tasks.";
     } else if (e.message === "conflict") {
@@ -257,7 +271,7 @@ function toggleTask(lineIdx) {
   const l = lines[lineIdx];
   if (!/^- \[[ xX]\]/.test((l || "").trim())) return;
   lines[lineIdx] = /\[[xX]\]/.test(l) ? l.replace(/\[[xX]\]/, "[ ]") : l.replace("[ ]", "[x]");
-  saveDaily(lines.join("\n"), "kernel-app: update daily tasks");
+  applyDailyChange(lines.join("\n"));
 }
 
 function removeTask(lineIdx) {
@@ -269,7 +283,7 @@ function removeTask(lineIdx) {
   const label = t.replace(/^- \[[ xX]\]\s*/, "");
   if (!confirm(`Remove "${label}"?`)) return;
   lines.splice(lineIdx, 1);
-  saveDaily(lines.join("\n"), "kernel-app: remove daily task");
+  applyDailyChange(lines.join("\n"));
 }
 
 /* add one or many tasks in a single commit */
@@ -280,8 +294,7 @@ function addTasks(texts) {
   if (!d) {
     /* no note yet — create it with the tasks in one go */
     const text = `---\ndate: "${todayIso()}"\ntags:\n  - daily\n---\n\n## Today\n\n${tasks.join("\n")}\n\n## Log\n\n`;
-    state.files.daily = { text: "", sha: null };
-    saveDaily(text, "kernel-app: create daily note");
+    applyDailyChange(text);
     return;
   }
   const lines = d.text.split("\n");
@@ -303,26 +316,31 @@ function addTasks(texts) {
     }
     lines.splice(insert, 0, ...tasks);
   }
-  saveDaily(lines.join("\n"), tasks.length === 1 ? "kernel-app: add daily task" : `kernel-app: add ${tasks.length} daily tasks`);
+  applyDailyChange(lines.join("\n"));
 }
 
 /* ---------- habit writes ---------- */
 
-async function saveHabits(newText, message) {
+function applyHabitChange(newText) {
+  state.files.habits = { text: newText, sha: state.files.habits?.sha ?? null };
+  render();
+  if (_habitTimer) clearTimeout(_habitTimer);
+  _habitTimer = setTimeout(flushHabits, SAVE_DELAY);
+}
+
+async function flushHabits() {
+  _habitTimer = null;
   const h = state.files.habits;
   if (!h) return;
-  const prev = { ...h };
   state.busy = true;
-  state.files.habits = { text: newText, sha: h.sha };
   render();
   try {
-    const sha = await putFile(PATHS.habits, newText, message, h.sha);
+    const sha = await putFile(PATHS.habits, h.text, "kernel-app: update habits", h.sha ?? undefined);
     state.files.habits.sha = sha;
     state.lastSync = Date.now();
     saveCache();
     state.error = null;
   } catch (e) {
-    state.files.habits = prev;
     if (e.message === "auth-write") {
       state.error = "Write rejected — your token needs Contents: Read and write to track habits.";
     } else if (e.message === "conflict") {
@@ -384,7 +402,51 @@ function toggleHabit(name) {
     row[col] = row[col].includes("✅") ? "—" : "✅";
     lines[rowIdx] = `| ${row.join(" | ")} |`;
   }
-  saveHabits(lines.join("\n"), `kernel-app: habit — ${name}`);
+  applyHabitChange(lines.join("\n"));
+}
+
+function addHabit(name) {
+  const h = state.files.habits;
+  if (!h) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const lines = h.text.split("\n");
+  const habIdx = lines.findIndex((l) => l.trim().toLowerCase().startsWith("## habits"));
+  if (habIdx === -1) return;
+  let end = lines.length;
+  for (let i = habIdx + 1; i < lines.length; i++) {
+    if (/^#+\s/.test(lines[i])) { end = i; break; }
+  }
+  const existing = lines.slice(habIdx + 1, end)
+    .filter((l) => /^[-*]\s+\S/.test(l.trim()))
+    .map((l) => l.trim().replace(/^[-*]\s+/, ""));
+  if (existing.some((n) => n.toLowerCase() === trimmed.toLowerCase())) return;
+  let lastItem = habIdx;
+  for (let i = habIdx + 1; i < end; i++) {
+    if (/^[-*]\s+/.test(lines[i].trim())) lastItem = i;
+  }
+  lines.splice(lastItem + 1, 0, `- ${trimmed}`);
+  applyHabitChange(lines.join("\n"));
+}
+
+function removeHabit(name) {
+  const h = state.files.habits;
+  if (!h) return;
+  const lines = h.text.split("\n");
+  const habIdx = lines.findIndex((l) => l.trim().toLowerCase().startsWith("## habits"));
+  if (habIdx === -1) return;
+  let end = lines.length;
+  for (let i = habIdx + 1; i < lines.length; i++) {
+    if (/^#+\s/.test(lines[i])) { end = i; break; }
+  }
+  const idx = lines.findIndex((l, i) => {
+    if (i <= habIdx || i >= end) return false;
+    const c = l.trim();
+    return /^[-*]\s+/.test(c) && c.replace(/^[-*]\s+/, "") === name;
+  });
+  if (idx === -1) return;
+  lines.splice(idx, 1);
+  applyHabitChange(lines.join("\n"));
 }
 
 /* ---------- markdown parsing ---------- */
@@ -1073,11 +1135,11 @@ function renderHabits(m) {
   }
   const done = m.habits.filter((h) => h.doneToday).length;
   const dis = state.busy ? "disabled" : "";
-  return `
-  <div class="card">
-    <h2>Today <span class="h-extra muted">${done}/${m.habits.length} done${state.busy ? " · saving…" : ""}</span></h2>
-    ${m.habits.length === 0 ? `<div class="empty">No habits in the list — add some to HabitLog.md</div>` : ""}
-    ${m.habits.map((h, i) => `
+  const editing = state.habitsEdit;
+
+  const habitRows = m.habits.map((h, i) => `
+    <div class="habit-wrap${editing ? " editing" : ""}">
+      ${editing ? `<button class="habit-del" data-del-habit="${esc(h.name)}" aria-label="Remove ${esc(h.name)}">${icon("x", 15)}</button>` : ""}
       <button class="habit ${h.doneToday ? "done" : ""}" data-habit="${i}" ${dis}>
         <span class="box">${h.doneToday ? "✓" : ""}</span>
         <span class="hb-main">
@@ -1085,9 +1147,28 @@ function renderHabits(m) {
           <span class="hb-week">${h.week.map((d, j) => `<span class="hb-dot ${d ? "on" : ""} ${j === 6 ? "today" : ""}"></span>`).join("")}</span>
         </span>
         <span class="hb-streak ${h.streak > 0 ? "hot" : ""}">${h.streak > 0 ? `${h.streak}🔥` : "—"}</span>
-      </button>`).join("")}
+      </button>
+    </div>`).join("");
+
+  const addRow = state.addingHabit
+    ? `<div class="habit-add-row">
+         <input class="habit-inp" id="inp-habit" placeholder="New habit name…" maxlength="60">
+         <button class="btn btn-sm" id="btn-habit-confirm" ${dis}>Add</button>
+         <button class="btn secondary btn-sm" id="btn-habit-cancel">Cancel</button>
+       </div>`
+    : `<button class="add-habit-btn" id="btn-add-habit" ${dis}>+ Add habit</button>`;
+
+  return `
+  <div class="card">
+    <h2>
+      <span>Today <span class="h-extra muted">${done}/${m.habits.length} done${state.busy ? " · saving…" : ""}</span></span>
+      ${m.habits.length > 0 && !state.addingHabit ? `<button class="text-btn" id="btn-habits-edit">${editing ? "Done" : "Edit"}</button>` : ""}
+    </h2>
+    ${m.habits.length === 0 ? `<div class="empty">No habits yet — add one below</div>` : ""}
+    ${habitRows}
+    ${!editing ? addRow : ""}
   </div>
-  <p class="muted" style="font-size:0.75rem;padding:0 4px;">Dots are the last 7 days. Edit the habit list in <code>HabitLog.md</code> — the app adapts on next sync.</p>`;
+  <p class="muted" style="font-size:0.75rem;padding:0 4px;">Dots show the last 7 days. Edits sync automatically.</p>`;
 }
 
 function renderArticles(m) {
@@ -1217,10 +1298,43 @@ function render() {
     });
   }
   updateClientSheet(m);
-  if (v === "habits" && m.habits) {
-    document.querySelectorAll("[data-habit]").forEach((b) => {
-      b.onclick = () => { const h = m.habits[parseInt(b.dataset.habit, 10)]; if (h) toggleHabit(h.name); };
-    });
+  if (v === "habits") {
+    if (m.habits) {
+      document.querySelectorAll("[data-habit]").forEach((b) => {
+        b.onclick = () => {
+          if (state.habitsEdit) return;
+          const h = m.habits[parseInt(b.dataset.habit, 10)];
+          if (h) toggleHabit(h.name);
+        };
+      });
+      document.querySelectorAll("[data-del-habit]").forEach((b) => {
+        b.onclick = () => {
+          if (confirm(`Remove "${b.dataset.delHabit}" from habits? Past log entries are kept.`)) removeHabit(b.dataset.delHabit);
+        };
+      });
+      const editBtn = $("#btn-habits-edit");
+      if (editBtn) editBtn.onclick = () => { state.habitsEdit = !state.habitsEdit; state.addingHabit = false; render(); };
+    }
+    const addBtn = $("#btn-add-habit");
+    if (addBtn) addBtn.onclick = () => {
+      state.addingHabit = true;
+      render();
+      setTimeout(() => { const inp = $("#inp-habit"); if (inp) inp.focus(); }, 0);
+    };
+    const confirmBtn = $("#btn-habit-confirm");
+    if (confirmBtn) confirmBtn.onclick = () => {
+      const name = ($("#inp-habit")?.value || "").trim();
+      state.addingHabit = false;
+      state.habitsEdit = false;
+      if (name) addHabit(name); else render();
+    };
+    const cancelBtn = $("#btn-habit-cancel");
+    if (cancelBtn) cancelBtn.onclick = () => { state.addingHabit = false; render(); };
+    const inp = $("#inp-habit");
+    if (inp) inp.onkeydown = (e) => {
+      if (e.key === "Enter") confirmBtn?.click();
+      if (e.key === "Escape") cancelBtn?.click();
+    };
   }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
@@ -1279,6 +1393,8 @@ document.querySelectorAll(".tab").forEach((b) => {
   b.onclick = () => {
     state.view = b.dataset.view;
     state.article = null;
+    state.habitsEdit = false;
+    state.addingHabit = false;
     showBars();
     render();
     scrollTo(0, 0);
