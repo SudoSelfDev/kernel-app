@@ -252,6 +252,55 @@ input::placeholder { color: var(--muted); }
   border: 1px solid var(--danger-border);
   border-radius: var(--radius); padding: 12px 14px; font-size: 0.85rem;
 }
+/* ---------- clients — expandable rows ---------- */
+
+.client-list { padding: 0 14px; }
+.client { border-bottom: 1px solid var(--border); }
+.client:last-child { border-bottom: none; }
+
+.client-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  width: 100%; padding: 11px 0; text-align: left;
+  background: none; border: none; color: var(--text);
+  cursor: pointer; font-family: inherit; border-radius: 8px;
+}
+.client-head:active { background: var(--surface2); }
+.client-head .r-main { min-width: 0; }
+.client-head .r-title { font-size: 0.92rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.client-head .r-sub { font-size: 0.75rem; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.client-head .r-end { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+.caret { color: var(--muted); display: flex; transition: transform 0.2s ease; }
+.client.open .caret, .scripts.open .caret { transform: rotate(180deg); }
+
+.client-detail {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 2px 0 12px;
+}
+.cd-row {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 8px 10px; text-align: left;
+  background: var(--surface2); border: none; border-radius: 8px;
+  color: var(--text); cursor: pointer; font-family: inherit; text-decoration: none;
+}
+.cd-row:active { background: var(--border); }
+.cd-k { flex-shrink: 0; width: 78px; font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.cd-v { flex: 1; min-width: 0; font-size: 0.85rem; overflow-wrap: anywhere; }
+.cd-v.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; }
+.cd-ic { flex-shrink: 0; color: var(--muted); display: flex; }
+.cd-call .cd-ic { color: var(--blue); }
+
+.copy-login { margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 7px; }
+
+/* collapsible card header (DM Scripts) */
+.card-head {
+  display: flex; justify-content: space-between; align-items: center;
+  width: 100%; background: none; border: none; cursor: pointer;
+  color: var(--text); font-family: inherit; padding: 0;
+}
+.card-head h2 { margin: 0; flex: 1; }
+.scripts.open .card-head { margin-bottom: 6px; }
+
 /* DM scripts — tap to copy */
 .script-row {
   display: flex; justify-content: space-between; align-items: center; gap: 10px;

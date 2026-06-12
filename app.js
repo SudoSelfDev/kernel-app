@@ -26,6 +26,8 @@ const LS_THEME = "kernel_theme"; // "auto" | "dark" | "light"
 const state = {
   view: "today",
   clientTab: "active",
+  openClient: null,   // "tab:index" of the expanded client row, or null
+  scriptsOpen: false, // DM Scripts card collapsed by default
   article: null,      // name of the open article, or null for the list
   files: {},          // clients/savings/debts/study/schedule: raw · daily: {text, sha}|null · articles: [{name, text}]
   lastSync: null,
@@ -48,6 +50,8 @@ const ICONS = {
   chevronLeft: '<polyline points="15 18 9 12 15 6"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   check: '<polyline points="20 6 9 17 4 12"/>',
+  phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
+  chevronDown: '<polyline points="6 9 12 15 18 9"/>',
 };
 
 const icon = (name, size = 20) =>
@@ -586,12 +590,74 @@ function timeAgo(t) {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+async function copyToClipboard(text) {
+  if (!text) return false;
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch { state.error = "Couldn't copy — clipboard blocked"; render(); return false; }
+}
+/* copy + flash a check mark in the given icon slot, then restore */
+function copySwap(iconEl, size, text) {
+  if (!iconEl) return;
+  copyToClipboard(text).then((ok) => {
+    if (!ok) return;
+    iconEl.innerHTML = icon("check", size);
+    setTimeout(() => { if (document.body.contains(iconEl)) iconEl.innerHTML = icon("copy", size); }, 1200);
+  });
+}
+
 function expiryChip(days) {
   if (days === null) return `<span class="chip dim">no date</span>`;
   if (days < 0) return `<span class="chip bad">expired ${-days}d ago</span>`;
   if (days <= 7) return `<span class="chip bad">${days}d left</span>`;
   if (days <= 30) return `<span class="chip warn">${days}d left</span>`;
   return `<span class="chip ok">${days}d left</span>`;
+}
+
+/* compact expiry chip for the collapsed client row — just the day count */
+function expiryMerged(c) {
+  const d = c.days;
+  if (d === null || d === undefined) return `<span class="chip dim">no date</span>`;
+  const cls = d < 0 ? "bad" : d <= 7 ? "bad" : d <= 30 ? "warn" : "ok";
+  return `<span class="chip ${cls}">${d < 0 ? `exp ${-d}d` : `${d}d`}</span>`;
+}
+
+/* treat em-dash / blank as "no value" */
+const cval = (x) => { const s = String(x ?? "").trim(); return (!s || s === "—") ? "" : s; };
+
+/* the panel's Samsung/LG (smart-tv.xyz) host shares the DNS subdomain — derive it */
+function smartTvDns(dns) {
+  try { const u = new URL(dns); return `${u.protocol}//${u.hostname.split(".")[0]}.smart-tv.xyz`; }
+  catch { return ""; }
+}
+/* M3U playlist link is fully determined by DNS + credentials */
+function m3uLink(dns, user, pass) {
+  if (!dns || !user || !pass) return "";
+  return `${dns.replace(/\/+$/, "")}/get.php?username=${encodeURIComponent(user)}` +
+    `&password=${encodeURIComponent(pass)}&type=m3u_plus&output=mpegts`;
+}
+/* the ready-to-send credentials block — what Copy login puts on the clipboard */
+function buildLoginMsg(c) {
+  const dns = cval(c.DNS), user = cval(c.Username), pass = cval(c.Password);
+  const L = ["📺 DarStream — Vos identifiants", ""];
+  if (dns) L.push(`🔗 URL: ${dns}`);
+  if (user) L.push(`👤 Utilisateur: ${user}`);
+  if (pass) L.push(`🔑 Mot de passe: ${pass}`);
+  const smart = dns ? smartTvDns(dns) : "";
+  if (smart) L.push("", "📱 Samsung / LG (IPTV Smarters):", smart);
+  const m3u = m3uLink(dns, user, pass);
+  if (m3u) L.push("", "📦 Lien M3U (VLC, etc.) :", m3u);
+  return L.join("\n");
+}
+
+/* a copyable key/value row inside an expanded client */
+function cdField(label, value, mono) {
+  const v = cval(value);
+  if (!v) return "";
+  return `<button class="cd-row" data-copy="${esc(v)}">
+    <span class="cd-k">${esc(label)}</span>
+    <span class="cd-v${mono ? " mono" : ""}">${esc(v)}</span>
+    <span class="cd-ic">${icon("copy", 14)}</span>
+  </button>`;
 }
 
 function renderToday(m) {
@@ -674,25 +740,68 @@ function renderToday(m) {
   </div>`;
 }
 
-function clientCard(c, kind) {
+function clientCard(c, kind, key, open) {
   const [cls, label] = statusChip(c.Status);
   const phone = (c.Phone || "").replace(/[^+\d]/g, "");
-  const sub = kind === "churned"
-    ? `${esc(c.Date || "")} · ${esc(c.Reason || "")}`
-    : kind === "leads"
-      ? `${esc(c.App || "—")} · trial: ${esc(c["Trial Start"] || "—")}`
-      : `${esc(c.App || "—")} · ${esc(c.Plan || "")} ${esc(c.Price || "")} · exp ${esc(c.Expiry || "—")}`;
+
+  /* sub line under the name */
+  let sub;
+  if (kind === "churned") sub = `${esc(cval(c.App) || "—")} · ${esc(cval(c.Date) || "")}`;
+  else if (kind === "leads") sub = `${esc(cval(c.App) || "—")} · trial ${esc(cval(c["Trial Start"]) || "—")}`;
+  else sub = `${esc(cval(c.App) || "—")}${cval(c.Plan) ? ` · ${esc(c.Plan)}` : ""}${cval(c.Price) ? ` ${esc(c.Price)}` : ""}`;
+
+  /* status chips show only when they're an exception — ✅ Active and 🔴 Churned are the
+     expected norm for their tab, so we drop them and let expiry / the tab speak */
+  const isNorm = kind === "active" ? (c.Status || "").includes("✅")
+    : kind === "churned" ? true : false;
+  const chip = isNorm ? "" : `<span class="chip ${cls}">${esc(label)}</span>`;
+  const right = kind === "active" ? `${chip}${expiryMerged(c)}` : chip;
+
+  const hasLogin = !!cval(c.Username) && (!!cval(c.DNS) || !!cval(c.Password));
+  const detail = `
+    <div class="client-detail">
+      ${phone ? `<a class="cd-row cd-call" href="tel:${phone}">
+        <span class="cd-k">Call</span><span class="cd-v mono">${esc(cval(c.Phone))}</span>
+        <span class="cd-ic">${icon("phone", 14)}</span></a>` : ""}
+      ${kind !== "churned" ? cdField("Expiry", c.Expiry) : ""}
+      ${cdField("DNS", c.DNS, true)}
+      ${cdField("Username", c.Username, true)}
+      ${cdField("Password", c.Password, true)}
+      ${cdField("MAC", c["MAC Address"], true)}
+      ${kind === "churned" ? cdField("Reason", c.Reason) : ""}
+      ${cdField("Notes", c.Notes)}
+      ${hasLogin ? `<button class="btn copy-login" data-login="${b64encode(buildLoginMsg(c))}">${icon("copy", 15)} Copy login to send</button>` : ""}
+    </div>`;
+
   return `
-  <div class="row">
-    <div class="r-main">
-      <div class="r-title">${esc(c.Name || "—")}</div>
-      <div class="r-sub">${phone ? `<a class="tel" href="tel:${phone}">${esc(c.Phone)}</a> · ` : ""}${sub}</div>
-      ${c.Username ? `<div class="r-sub">user: ${esc(c.Username)}${c.Notes && c.Notes !== "—" ? ` · ${esc(c.Notes)}` : ""}</div>` : ""}
-    </div>
-    <div class="r-end">
-      <span class="chip ${cls}">${esc(label)}</span>
-      ${kind === "active" ? `<div style="margin-top:5px">${expiryChip(c.days)}</div>` : ""}
-    </div>
+  <div class="client${open ? " open" : ""}">
+    <button class="client-head" data-client="${esc(key)}">
+      <div class="r-main">
+        <div class="r-title">${esc(cval(c.Name) || "—")}</div>
+        <div class="r-sub">${phone ? `${esc(c.Phone)} · ` : ""}${sub}</div>
+      </div>
+      <div class="r-end">${right}<span class="caret">${icon("chevronDown", 16)}</span></div>
+    </button>
+    ${open ? detail : ""}
+  </div>`;
+}
+
+function scriptsCard(m) {
+  const open = state.scriptsOpen;
+  return `
+  <div class="card scripts${open ? " open" : ""}">
+    <button class="card-head" id="scripts-toggle">
+      <h2>DM Scripts <span class="h-extra muted">${m.scripts.length} · tap to ${open ? "hide" : "show"}</span></h2>
+      <span class="caret">${icon("chevronDown", 16)}</span>
+    </button>
+    ${open ? m.scripts.map((s, i) => `
+      <button class="script-row" data-script="${i}">
+        <div class="r-main">
+          <div class="r-title">${esc(s.name)}</div>
+          <div class="r-sub script-preview">${esc(s.text)}</div>
+        </div>
+        <span class="script-copy">${icon("copy", 16)}</span>
+      </button>`).join("") : ""}
   </div>`;
 }
 
@@ -706,22 +815,13 @@ function renderClients(m) {
     <button data-ctab="leads" class="${tab === "leads" ? "active" : ""}">Leads (${m.leads.length})</button>
     <button data-ctab="churned" class="${tab === "churned" ? "active" : ""}">Churned (${m.churned.length})</button>
   </div>
-  <div class="card">
-    ${sorted.length ? sorted.map((c) => clientCard(c, tab)).join("") : `<div class="empty">Nothing here</div>`}
+  <div class="card client-list">
+    ${sorted.length
+      ? sorted.map((c, i) => clientCard(c, tab, `${tab}:${i}`, state.openClient === `${tab}:${i}`)).join("")
+      : `<div class="empty">Nothing here</div>`}
   </div>
 
-  ${m.scripts.length ? `
-  <div class="card">
-    <h2>DM Scripts <span class="h-extra muted">tap to copy</span></h2>
-    ${m.scripts.map((s, i) => `
-      <button class="script-row" data-script="${i}">
-        <div class="r-main">
-          <div class="r-title">${esc(s.name)}</div>
-          <div class="r-sub script-preview">${esc(s.text)}</div>
-        </div>
-        <span class="script-copy">${icon("copy", 16)}</span>
-      </button>`).join("")}
-  </div>` : ""}`;
+  ${m.scripts.length ? scriptsCard(m) : ""}`;
 }
 
 function renderMoney(m) {
@@ -878,18 +978,33 @@ function render() {
   }
   if (v === "clients") {
     document.querySelectorAll("[data-ctab]").forEach((b) => {
-      b.onclick = () => { state.clientTab = b.dataset.ctab; render(); };
+      b.onclick = () => { state.clientTab = b.dataset.ctab; state.openClient = null; render(); };
     });
-    document.querySelectorAll("[data-script]").forEach((b) => {
-      b.onclick = async () => {
-        const s = m.scripts[parseInt(b.dataset.script, 10)];
-        if (!s) return;
-        try {
-          await navigator.clipboard.writeText(s.text);
-          b.querySelector(".script-copy").innerHTML = icon("check", 16);
-          setTimeout(() => { const el = b.querySelector(".script-copy"); if (el) el.innerHTML = icon("copy", 16); }, 1200);
-        } catch { state.error = "Couldn't copy — clipboard blocked"; render(); }
+    document.querySelectorAll("[data-client]").forEach((b) => {
+      b.onclick = () => {
+        const k = b.dataset.client;
+        state.openClient = state.openClient === k ? null : k;
+        render();
       };
+    });
+    document.querySelectorAll(".cd-row[data-copy]").forEach((el) => {
+      el.onclick = (e) => { e.stopPropagation(); copySwap(el.querySelector(".cd-ic"), 14, el.dataset.copy); };
+    });
+    document.querySelectorAll("[data-login]").forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        copyToClipboard(b64decode(b.dataset.login)).then((ok) => {
+          if (!ok) return;
+          const orig = b.innerHTML;
+          b.innerHTML = `${icon("check", 15)} Copied`;
+          setTimeout(() => { if (document.body.contains(b)) b.innerHTML = orig; }, 1300);
+        });
+      };
+    });
+    const st = $("#scripts-toggle");
+    if (st) st.onclick = () => { state.scriptsOpen = !state.scriptsOpen; render(); };
+    document.querySelectorAll("[data-script]").forEach((b) => {
+      b.onclick = () => copySwap(b.querySelector(".script-copy"), 16, m.scripts[parseInt(b.dataset.script, 10)]?.text);
     });
   }
   if (v === "articles") {
