@@ -35,7 +35,6 @@ const state = {
   error: null,
   busy: false,        // a write is in flight
   habitsEdit: false,  // edit mode for habit list
-  addingHabit: false, // inline add-habit form open
 };
 
 let _dailyTimer = null;
@@ -1150,23 +1149,14 @@ function renderHabits(m) {
       </button>
     </div>`).join("");
 
-  const addRow = state.addingHabit
-    ? `<div class="habit-add-row">
-         <input class="habit-inp" id="inp-habit" placeholder="New habit name…" maxlength="60">
-         <button class="btn btn-sm" id="btn-habit-confirm" ${dis}>Add</button>
-         <button class="btn secondary btn-sm" id="btn-habit-cancel">Cancel</button>
-       </div>`
-    : `<button class="add-habit-btn" id="btn-add-habit" ${dis}>+ Add habit</button>`;
-
   return `
   <div class="card">
     <h2>
       <span>Today <span class="h-extra muted">${done}/${m.habits.length} done${state.busy ? " · saving…" : ""}</span></span>
-      ${m.habits.length > 0 && !state.addingHabit ? `<button class="text-btn" id="btn-habits-edit">${editing ? "Done" : "Edit"}</button>` : ""}
+      ${m.habits.length > 0 ? `<button class="text-btn" id="btn-habits-edit">${editing ? "Done" : "Edit"}</button>` : ""}
     </h2>
-    ${m.habits.length === 0 ? `<div class="empty">No habits yet — add one below</div>` : ""}
+    ${m.habits.length === 0 ? `<div class="empty">No habits yet — tap + to add one</div>` : ""}
     ${habitRows}
-    ${!editing ? addRow : ""}
   </div>
   <p class="muted" style="font-size:0.75rem;padding:0 4px;">Dots show the last 7 days. Edits sync automatically.</p>`;
 }
@@ -1272,8 +1262,8 @@ function render() {
   /* settings has no tab — opening it via the gear clears the bar */
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === v));
 
-  /* the floating add button only makes sense on Today */
-  $("#fab").classList.toggle("hidden", v !== "today");
+  /* the floating add button adds tasks on Today, habits on Habits */
+  $("#fab").classList.toggle("hidden", v !== "today" && v !== "habits");
   $("#fab").disabled = state.busy;
 
   if (v === "today") {
@@ -1298,43 +1288,21 @@ function render() {
     });
   }
   updateClientSheet(m);
-  if (v === "habits") {
-    if (m.habits) {
-      document.querySelectorAll("[data-habit]").forEach((b) => {
-        b.onclick = () => {
-          if (state.habitsEdit) return;
-          const h = m.habits[parseInt(b.dataset.habit, 10)];
-          if (h) toggleHabit(h.name);
-        };
-      });
-      document.querySelectorAll("[data-del-habit]").forEach((b) => {
-        b.onclick = () => {
-          if (confirm(`Remove "${b.dataset.delHabit}" from habits? Past log entries are kept.`)) removeHabit(b.dataset.delHabit);
-        };
-      });
-      const editBtn = $("#btn-habits-edit");
-      if (editBtn) editBtn.onclick = () => { state.habitsEdit = !state.habitsEdit; state.addingHabit = false; render(); };
-    }
-    const addBtn = $("#btn-add-habit");
-    if (addBtn) addBtn.onclick = () => {
-      state.addingHabit = true;
-      render();
-      setTimeout(() => { const inp = $("#inp-habit"); if (inp) inp.focus(); }, 0);
-    };
-    const confirmBtn = $("#btn-habit-confirm");
-    if (confirmBtn) confirmBtn.onclick = () => {
-      const name = ($("#inp-habit")?.value || "").trim();
-      state.addingHabit = false;
-      state.habitsEdit = false;
-      if (name) addHabit(name); else render();
-    };
-    const cancelBtn = $("#btn-habit-cancel");
-    if (cancelBtn) cancelBtn.onclick = () => { state.addingHabit = false; render(); };
-    const inp = $("#inp-habit");
-    if (inp) inp.onkeydown = (e) => {
-      if (e.key === "Enter") confirmBtn?.click();
-      if (e.key === "Escape") cancelBtn?.click();
-    };
+  if (v === "habits" && m.habits) {
+    document.querySelectorAll("[data-habit]").forEach((b) => {
+      b.onclick = () => {
+        if (state.habitsEdit) return;
+        const h = m.habits[parseInt(b.dataset.habit, 10)];
+        if (h) toggleHabit(h.name);
+      };
+    });
+    document.querySelectorAll("[data-del-habit]").forEach((b) => {
+      b.onclick = () => {
+        if (confirm(`Remove "${b.dataset.delHabit}" from habits? Past log entries are kept.`)) removeHabit(b.dataset.delHabit);
+      };
+    });
+    const editBtn = $("#btn-habits-edit");
+    if (editBtn) editBtn.onclick = () => { state.habitsEdit = !state.habitsEdit; render(); };
   }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
@@ -1386,6 +1354,18 @@ function closeComposer() {
   $("#composer-text").value = "";
 }
 
+/* ---------- habit modal ---------- */
+
+function openHabitModal() {
+  if (state.busy) return;
+  $("#habit-modal").classList.remove("hidden");
+  $("#habit-name").focus();
+}
+function closeHabitModal() {
+  $("#habit-modal").classList.add("hidden");
+  $("#habit-name").value = "";
+}
+
 /* ---------- boot ---------- */
 
 document.querySelectorAll(".tab").forEach((b) => {
@@ -1394,7 +1374,6 @@ document.querySelectorAll(".tab").forEach((b) => {
     state.view = b.dataset.view;
     state.article = null;
     state.habitsEdit = false;
-    state.addingHabit = false;
     showBars();
     render();
     scrollTo(0, 0);
@@ -1413,13 +1392,24 @@ $("#btn-theme").onclick = () => {
 };
 
 $("#fab").innerHTML = icon("plus", 24);
-$("#fab").onclick = openComposer;
+$("#fab").onclick = () => (state.view === "habits" ? openHabitModal() : openComposer());
 $("#composer-cancel").onclick = closeComposer;
 $("#composer").onclick = (e) => { if (e.target.id === "composer") closeComposer(); };
 $("#composer-add").onclick = () => {
   const texts = $("#composer-text").value.split("\n");
   closeComposer();
   addTasks(texts);
+};
+$("#habit-cancel").onclick = closeHabitModal;
+$("#habit-modal").onclick = (e) => { if (e.target.id === "habit-modal") closeHabitModal(); };
+$("#habit-add").onclick = () => {
+  const name = $("#habit-name").value.trim();
+  closeHabitModal();
+  if (name) addHabit(name);
+};
+$("#habit-name").onkeydown = (e) => {
+  if (e.key === "Enter") $("#habit-add").click();
+  if (e.key === "Escape") closeHabitModal();
 };
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");

@@ -18,7 +18,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="style.css?v=13">
+  <link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
   <header id="topbar">
@@ -32,7 +32,7 @@
 
   <button id="fab" class="hidden" aria-label="Add tasks"></button>
 
-  <div id="composer" class="sheet-backdrop hidden">
+  <div id="composer" class="sheet-backdrop center hidden">
     <div class="sheet">
       <h3>Add tasks</h3>
       <p class="muted">One task per line — all saved in a single sync.</p>
@@ -40,6 +40,18 @@
       <div class="sheet-actions">
         <button class="btn secondary" id="composer-cancel">Cancel</button>
         <button class="btn" id="composer-add">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="habit-modal" class="sheet-backdrop center hidden">
+    <div class="sheet">
+      <h3>Add habit</h3>
+      <p class="muted">It shows up in the list right away and starts tracking from today.</p>
+      <input type="text" id="habit-name" placeholder="e.g. Drink 2L water" maxlength="60">
+      <div class="sheet-actions">
+        <button class="btn secondary" id="habit-cancel">Cancel</button>
+        <button class="btn" id="habit-add">Add</button>
       </div>
     </div>
   </div>
@@ -54,6 +66,6 @@
     <button data-view="habits" data-icon="checkCircle" class="tab"><span class="ticon"></span>Habits</button>
   </nav>
 
-  <script src="app.js?v=13"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>
