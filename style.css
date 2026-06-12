@@ -252,6 +252,22 @@ input::placeholder { color: var(--muted); }
   border: 1px solid var(--danger-border);
   border-radius: var(--radius); padding: 12px 14px; font-size: 0.85rem;
 }
+/* DM scripts — tap to copy */
+.script-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  width: 100%; padding: 9px 4px; text-align: left;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); cursor: pointer; border-radius: 8px;
+  font-family: inherit;
+}
+.script-row:last-child { border-bottom: none; }
+.script-row:active { background: var(--surface2); }
+.script-row .r-main { min-width: 0; }
+.script-preview {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.script-copy { flex-shrink: 0; color: var(--muted); display: flex; }
+
 /* ---------- articles ---------- */
 
 .art-card {

@@ -16,6 +16,7 @@ const PATHS = {
   dailyDir: atob("MjBfTGlmZWxvZy8yMV9EYWlseU5vdGVzLw=="),
   schedule: atob("MjBfTGlmZWxvZy9zY2hlZHVsZS5qc29u"),
   research: atob("MzBfTGlicmFyeS9SZXNlYXJjaA=="),
+  masterplan: atob("MTBfUHJvamVjdHMvRGFyU3RyZWFtL21hc3Rlci1wbGFuLm1k"),
 };
 
 const LS_TOKEN = "kernel_pat";
@@ -45,6 +46,8 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
   chevronLeft: '<polyline points="15 18 9 12 15 6"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  check: '<polyline points="20 6 9 17 4 12"/>',
 };
 
 const icon = (name, size = 20) =>
@@ -183,7 +186,7 @@ async function syncAll() {
   setSyncStatus("syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, study, daily, schedule, researchDir] = await Promise.all([
+    const [clients, savings, debts, study, daily, schedule, researchDir, masterplan] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
@@ -191,6 +194,7 @@ async function syncAll() {
       fetchWithSha(todayNotePath(), { optional: true }),
       fetchRaw(PATHS.schedule, { optional: true }),
       fetchDir(PATHS.research, { optional: true }),
+      fetchRaw(PATHS.masterplan, { optional: true }),
     ]);
     let articles = [];
     if (Array.isArray(researchDir)) {
@@ -198,7 +202,7 @@ async function syncAll() {
       const texts = await Promise.all(mds.map((f) => fetchRaw(`${PATHS.research}/${f.name}`)));
       articles = mds.map((f, i) => ({ name: f.name, text: texts[i] }));
     }
-    state.files = { clients, savings, debts, study, daily, schedule, articles };
+    state.files = { clients, savings, debts, study, daily, schedule, articles, masterplan };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -528,6 +532,19 @@ function buildModel() {
     } catch { /* malformed schedule.json — treat as absent */ }
   }
 
+  m.scripts = [];
+  if (f.masterplan) {
+    /* "## DM Scripts" → one entry per "### Name" + its blockquote */
+    const body = section(f.masterplan, "## DM Scripts");
+    const parts = body.split(/^###\s+/m).slice(1);
+    m.scripts = parts.map((p) => {
+      const lines = p.split("\n");
+      const text = lines.filter((l) => l.trim().startsWith(">"))
+        .map((l) => l.replace(/^>\s?/, "").replace(/^"|"$/g, "")).join("\n");
+      return { name: lines[0].trim(), text };
+    }).filter((s) => s.text);
+  }
+
   if (Array.isArray(f.articles)) {
     m.articles = f.articles.map((a) => {
       const fm = frontmatter(a.text);
@@ -691,7 +708,20 @@ function renderClients(m) {
   </div>
   <div class="card">
     ${sorted.length ? sorted.map((c) => clientCard(c, tab)).join("") : `<div class="empty">Nothing here</div>`}
-  </div>`;
+  </div>
+
+  ${m.scripts.length ? `
+  <div class="card">
+    <h2>DM Scripts <span class="h-extra muted">tap to copy</span></h2>
+    ${m.scripts.map((s, i) => `
+      <button class="script-row" data-script="${i}">
+        <div class="r-main">
+          <div class="r-title">${esc(s.name)}</div>
+          <div class="r-sub script-preview">${esc(s.text)}</div>
+        </div>
+        <span class="script-copy">${icon("copy", 16)}</span>
+      </button>`).join("")}
+  </div>` : ""}`;
 }
 
 function renderMoney(m) {
@@ -849,6 +879,17 @@ function render() {
   if (v === "clients") {
     document.querySelectorAll("[data-ctab]").forEach((b) => {
       b.onclick = () => { state.clientTab = b.dataset.ctab; render(); };
+    });
+    document.querySelectorAll("[data-script]").forEach((b) => {
+      b.onclick = async () => {
+        const s = m.scripts[parseInt(b.dataset.script, 10)];
+        if (!s) return;
+        try {
+          await navigator.clipboard.writeText(s.text);
+          b.querySelector(".script-copy").innerHTML = icon("check", 16);
+          setTimeout(() => { const el = b.querySelector(".script-copy"); if (el) el.innerHTML = icon("copy", 16); }, 1200);
+        } catch { state.error = "Couldn't copy — clipboard blocked"; render(); }
+      };
     });
   }
   if (v === "articles") {
