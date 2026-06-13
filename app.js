@@ -35,7 +35,39 @@ const state = {
   error: null,
   busy: false,        // a write is in flight
   habitsEdit: false,  // edit mode for habit list
+  trackerExpanded: false, // show projected months in finances
 };
+
+/* ---------- confetti ---------- */
+
+function launchConfetti() {
+  const canvas = document.createElement("canvas");
+  canvas.style.cssText = "position:fixed;inset:0;z-index:999;pointer-events:none;";
+  canvas.width = innerWidth; canvas.height = innerHeight;
+  document.body.appendChild(canvas);
+  const ctx = canvas.getContext("2d");
+  const colors = ["#4ade80","#fbbf24","#60a5fa","#f87171","#a78bfa","#fb923c","#34d399"];
+  const pieces = Array.from({ length: 90 }, () => ({
+    x: Math.random() * canvas.width, y: -10 - Math.random() * 120,
+    r: 4 + Math.random() * 5,
+    color: colors[Math.floor(Math.random() * colors.length)],
+    vx: (Math.random() - 0.5) * 4, vy: 2.5 + Math.random() * 3,
+    angle: Math.random() * Math.PI * 2, vr: (Math.random() - 0.5) * 0.18,
+    aspect: 0.35 + Math.random() * 0.5,
+  }));
+  const start = Date.now();
+  (function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    pieces.forEach((p) => {
+      p.x += p.vx; p.y += p.vy; p.vy += 0.09; p.angle += p.vr;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.r, -p.r * p.aspect, p.r * 2, p.r * 2 * p.aspect);
+      ctx.restore();
+    });
+    if (Date.now() - start < 2800) requestAnimationFrame(draw); else canvas.remove();
+  })();
+}
 
 let _dailyTimer = null;
 let _habitTimer = null;
@@ -269,7 +301,9 @@ function toggleTask(lineIdx) {
   const lines = d.text.split("\n");
   const l = lines[lineIdx];
   if (!/^- \[[ xX]\]/.test((l || "").trim())) return;
-  lines[lineIdx] = /\[[xX]\]/.test(l) ? l.replace(/\[[xX]\]/, "[ ]") : l.replace("[ ]", "[x]");
+  const completing = !/\[[xX]\]/.test(l);
+  lines[lineIdx] = completing ? l.replace("[ ]", "[x]") : l.replace(/\[[xX]\]/, "[ ]");
+  if (completing) launchConfetti();
   applyDailyChange(lines.join("\n"));
 }
 
@@ -391,16 +425,20 @@ function toggleHabit(name) {
     if (cells(lines[i])[0] === iso) { rowIdx = i; break; }
   }
 
+  let completing = false;
   if (rowIdx === -1) {
+    completing = true;
     const row = cols.map((_, i) => (i === 0 ? iso : i === col ? "✅" : "—"));
     /* insert right after the header so the newest day reads first */
     lines.splice(head + 2, 0, `| ${row.join(" | ")} |`);
   } else {
     const row = cells(lines[rowIdx]);
     while (row.length < cols.length) row.push("—");
-    row[col] = row[col].includes("✅") ? "—" : "✅";
+    completing = !row[col].includes("✅");
+    row[col] = completing ? "✅" : "—";
     lines[rowIdx] = `| ${row.join(" | ")} |`;
   }
+  if (completing) launchConfetti();
   applyHabitChange(lines.join("\n"));
 }
 
@@ -1087,20 +1125,33 @@ function renderMoney(m) {
   const pct = s.current && s.target ? Math.min(100, (s.current / s.target) * 100) : 0;
   const nowM = new Date().toLocaleDateString("en-US", { month: "short" });
   const nowY = String(new Date().getFullYear());
-  const tracker = (s.tracker || []).map((r) => {
-    const vals = Object.values(r).map((v) => v.replace(/\*/g, ""));
-    const month = vals[0] || "";
-    /* rows without ✓ are Nadia's projections, not actuals */
-    const isActual = (vals[3] || "").includes("✓");
-    const isCurrent = month.includes(nowM) && month.includes(nowY);
-    const clean = (v) => esc((v || "").replace(/✓/g, "").trim());
-    return `<tr class="${isCurrent ? "tr-current" : ""}${!isActual && !isCurrent ? " tr-proj" : ""}">
-      <td>${clean(month)}${isCurrent ? ` <span class="tr-now">now</span>` : ""}</td>
-      <td class="right">${clean(vals[3])}</td><td class="right">${clean(vals[4])}</td><td class="right">${clean(vals[5])}</td></tr>`;
-  }).join("");
-
   const monthly = s.monthly || 5500;
   const remaining = Math.max(0, monthly - (s.monthSaved || 0));
+
+  const trackerRows = (s.tracker || []).map((r) => {
+    const vals = Object.values(r).map((v) => v.replace(/\*/g, ""));
+    const month = vals[0] || "";
+    const isActual = (vals[3] || "").includes("✓");
+    const isCurrent = month.includes(nowM) && month.includes(nowY);
+    const isProj = !isActual && !isCurrent;
+    const saved = num(vals[3]);
+    const savedStr = saved !== null ? `${saved.toLocaleString()} MAD` : (vals[3] || "").replace(/✓/g, "").trim() || "—";
+    const onTrack = (vals[5] || "").includes("✓") || /yes/i.test(vals[5] || "");
+    const barPct = (isActual || isCurrent) && saved !== null ? Math.min(100, Math.round((saved / monthly) * 100)) : 0;
+    let pill = isCurrent
+      ? `<span class="tr-now">now</span>`
+      : isActual
+        ? (onTrack ? `<span class="chip ok" style="font-size:0.65rem;padding:2px 7px">✓</span>` : `<span class="chip bad" style="font-size:0.65rem;padding:2px 7px">✗</span>`)
+        : `<span class="muted" style="font-size:0.72rem">projected</span>`;
+    return {
+      isProj,
+      html: `<div class="tracker-row${isCurrent ? " tr-cur" : ""}${isProj ? " tr-proj" : ""}">
+        <div class="tr-head"><span class="tr-month">${esc(month)}</span>${pill}</div>
+        <div class="tr-bar"><div class="tr-bar-fill" style="width:${barPct}%"></div></div>
+        <div class="tr-amount">${isProj ? "—" : `${savedStr} saved`}</div>
+      </div>`,
+    };
+  });
 
   return `
   <div class="card">
@@ -1129,14 +1180,19 @@ function renderMoney(m) {
     }).join("") || `<div class="empty">No debts tracked</div>`}
   </div>
 
-  ${tracker ? `
-  <div class="card">
-    <h2>Monthly Tracker <span class="h-extra muted">faded = projection</span></h2>
-    <table class="mini-table">
-      <tr><th>Month</th><th class="right">Saved</th><th class="right">Total</th><th class="right">OK?</th></tr>
-      ${tracker}
-    </table>
-  </div>` : ""}`;
+  ${trackerRows.length ? (() => {
+    const visible = trackerRows.filter(r => !r.isProj);
+    const proj = trackerRows.filter(r => r.isProj);
+    const toggleBtn = proj.length
+      ? `<button class="show-toggle" id="btn-tracker-toggle">${state.trackerExpanded ? "Show less" : `+ ${proj.length} projected month${proj.length === 1 ? "" : "s"}`}</button>`
+      : "";
+    return `<div class="card">
+      <h2>Monthly Tracker</h2>
+      ${visible.map(r => r.html).join("")}
+      ${state.trackerExpanded ? proj.map(r => r.html).join("") : ""}
+      ${toggleBtn}
+    </div>`;
+  })() : ""}`;
 }
 
 function renderHabits(m) {
@@ -1314,6 +1370,10 @@ function render() {
     });
     const editBtn = $("#btn-habits-edit");
     if (editBtn) editBtn.onclick = () => { state.habitsEdit = !state.habitsEdit; render(); };
+  }
+  if (v === "money") {
+    const tt = $("#btn-tracker-toggle");
+    if (tt) tt.onclick = () => { state.trackerExpanded = !state.trackerExpanded; render(); };
   }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
