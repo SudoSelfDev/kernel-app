@@ -166,6 +166,19 @@ const b64encode = (s) => {
 const b64decode = (b) =>
   new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, "")), (c) => c.charCodeAt(0)));
 
+/* git blob SHA-1 of text, computed locally: sha1("blob <bytelen>\0" + content).
+   Lets us write a file using only the raw read (no contents-JSON call). */
+async function gitBlobSha(text) {
+  const body = new TextEncoder().encode(text);
+  const prefix = new TextEncoder().encode(`blob ${body.length}`);
+  const data = new Uint8Array(prefix.length + 1 + body.length);
+  data.set(prefix, 0);
+  data[prefix.length] = 0; // NUL separator
+  data.set(body, prefix.length + 1);
+  const h = await crypto.subtle.digest("SHA-1", data);
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 async function fetchRaw(path, { optional = false } = {}) {
   const res = await fetch(`${contentsUrl(path)}?ref=${BRANCH}`, {
     headers: { ...ghHeaders(), Accept: "application/vnd.github.raw+json" },
@@ -510,9 +523,12 @@ async function flushSavings() {
   state.busy = true;
   render();
   try {
-    /* fetch a fresh sha right before writing — avoids stale-sha conflicts */
-    const meta = await fetchWithSha(PATHS.savings);
-    await putFile(PATHS.savings, text, "kernel-app: update Sunday review", meta.sha);
+    /* read the current file with the raw endpoint (reliable everywhere) and
+       derive its blob sha locally — avoids the contents-JSON call that fails
+       in some environments */
+    const serverText = await fetchRaw(PATHS.savings);
+    const baseSha = await gitBlobSha(serverText);
+    await putFile(PATHS.savings, text, "kernel-app: update Sunday review", baseSha);
     state.lastSync = Date.now();
     saveCache();
     state.error = null;
