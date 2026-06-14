@@ -37,6 +37,8 @@ const state = {
   busy: false,        // a write is in flight
   habitsEdit: false,  // edit mode for habit list
   trackerExpanded: false, // show projected months in finances
+  reviewEdit: false,  // force-show the Sunday review form even if done this week
+  reviewMonk: null,   // pending monk-mode pick in the review form
 };
 
 /* ---------- confetti ---------- */
@@ -530,47 +532,107 @@ async function flushSavings() {
   render();
 }
 
-/* Monday (ISO) of the current week, as YYYY-MM-DD — the review's "week of" key */
-function weekOfMonday() {
-  const d = new Date();
-  const day = (d.getDay() + 6) % 7; // 0 = Monday
-  d.setDate(d.getDate() - day);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/* Monday (ISO) of the week containing date d, as YYYY-MM-DD */
+function mondayOf(d) {
+  const x = new Date(d);
+  const day = (x.getDay() + 6) % 7; // 0 = Monday
+  x.setDate(x.getDate() - day);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
 }
+const weekOfMonday = () => mondayOf(new Date());
 
 function savingsText() {
   const s = state.files.savings;
   return s ? (typeof s === "string" ? s : s.text) : "";
 }
 
-/* toggle one Sunday-review checklist item by its absolute line index */
-function toggleReview(lineIdx) {
-  if (state.busy) return;
-  const lines = savingsText().split("\n");
-  const l = lines[lineIdx];
-  if (!/^- \[[ xX]\]/.test((l || "").trim())) return;
-  lines[lineIdx] = /\[[xX]\]/.test(l) ? l.replace(/\[[xX]\]/, "[ ]") : l.replace("[ ]", "[x]");
-  applySavingsChange(lines.join("\n"));
+const fmtNum = (n) => Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 });
+
+/* replace a "| **Key** | value |" row's value inside the ## Goal table */
+function setGoalField(lines, key, value) {
+  const gStart = lines.findIndex((l) => /^##\s+goal/i.test(l.trim()));
+  if (gStart === -1) return;
+  for (let i = gStart + 1; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i])) break;
+    const cells = lines[i].split("|");
+    if (cells.length >= 3 && cells[1].replace(/\*/g, "").trim().toLowerCase() === key.toLowerCase()) {
+      cells[2] = ` ${value} `;
+      lines[i] = cells.join("|");
+      return;
+    }
+  }
 }
 
-/* clear all review checkboxes and stamp the new week */
-function resetReviewWeek() {
+/* Save a weekly review: append a dated Review Log entry, then (optionally)
+   update Current savings, Remaining to goal, and the current month's tracker row */
+function saveReview(v) {
   if (state.busy) return;
-  const text = savingsText();
-  const lines = text.split("\n");
-  const start = lines.findIndex((l) => /^##\s+weekly sunday review/i.test(l.trim()));
-  if (start === -1) return;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^##\s/.test(lines[i])) { end = i; break; }
+  const lines = savingsText().split("\n");
+  const s = buildModel().savings;
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 10);
+  const dow = now.toLocaleDateString("en-US", { weekday: "short" });
+
+  /* 1) Review Log entry (newest first) */
+  const entry = [
+    `### ${dateStr} (${dow})`,
+    `- Balance: ${v.balance != null ? fmtNum(v.balance) + " MAD" : "—"}`,
+    `- Spent this week: ${v.spent != null ? fmtNum(v.spent) + " MAD" : "—"}`,
+    `- Discretionary: ${v.disc != null ? fmtNum(v.disc) + " MAD" : "—"}`,
+    `- Monk mode: ${v.monk || "—"}`,
+    `- Notes: ${v.notes || "—"}`,
+    "",
+  ];
+  let logIdx = lines.findIndex((l) => /^##\s+review log/i.test(l.trim()));
+  if (logIdx === -1) {
+    lines.push("", "## Review Log", "");
+    logIdx = lines.length - 2;
   }
-  for (let i = start + 1; i < end; i++) {
-    if (/^- \[[ xX]\]/.test(lines[i].trim())) lines[i] = lines[i].replace(/\[[xX]\]/, "[ ]");
+  /* skip the heading + any intro prose/blank, insert before the first existing entry */
+  let insertAt = logIdx + 1;
+  while (insertAt < lines.length && !/^###\s/.test(lines[insertAt]) && !/^##\s/.test(lines[insertAt])) insertAt++;
+  lines.splice(insertAt, 0, ...entry);
+
+  /* 2) live updates from the balance */
+  if (v.balance != null) {
+    const dateNice = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    setGoalField(lines, "Current savings", `${fmtNum(v.balance)} MAD (${dateNice})`);
+    if (s.target) setGoalField(lines, "Remaining to goal", `${fmtNum(Math.max(0, s.target - v.balance))} MAD`);
+
+    /* tracker: current month row → Saved, Total Saved, Rate, On Track? */
+    const tStart = lines.findIndex((l) => /^##\s+progress tracker/i.test(l.trim()));
+    if (tStart !== -1) {
+      const mShort = now.toLocaleDateString("en-US", { month: "short" });
+      const yr = String(now.getFullYear());
+      let tEnd = lines.length;
+      for (let i = tStart + 1; i < lines.length; i++) { if (/^##\s/.test(lines[i])) { tEnd = i; break; } }
+      const dataRows = [];
+      for (let i = tStart + 1; i < tEnd; i++) {
+        if (lines[i].trim().startsWith("|") && !/^\|[\s\-:|]+\|$/.test(lines[i].trim()) && !/Month/i.test(lines[i])) dataRows.push(i);
+      }
+      const curIdx = dataRows.find((i) => lines[i].includes(mShort) && lines[i].includes(yr));
+      /* baseline = last prior month's Total Saved, else plan start */
+      let baseline = s.planStart || 0;
+      for (const i of dataRows) {
+        if (i === curIdx) break;
+        const t = num(lines[i].split("|")[5]); // Total Saved col
+        if (t != null) baseline = t;
+      }
+      if (curIdx != null) {
+        const saved = v.balance - baseline;
+        const cells = lines[curIdx].split("|"); // ["", " Jun 2026 ", salary, exp, saved, total, rate, ontrack, ""]
+        const salary = num(cells[2]);
+        cells[1] = ` ${mShort} ${yr} `;
+        cells[4] = ` ${fmtNum(saved)} `;
+        cells[5] = ` ${fmtNum(v.balance)} `;
+        cells[6] = ` ${salary ? Math.round((saved / salary) * 100) + "%" : "—"} `;
+        cells[7] = ` ${saved >= (s.monthlyFloor || 0) ? "✓" : "✗"} `;
+        lines[curIdx] = cells.join("|");
+      }
+    }
   }
-  const stamp = `*Week of: ${weekOfMonday()}*`;
-  const markIdx = lines.findIndex((l, i) => i > start && i < end && /^\*week of:/i.test(l.trim()));
-  if (markIdx !== -1) lines[markIdx] = stamp;
-  else lines.splice(start + 1, 0, "", stamp);
+
+  state.reviewEdit = false;
   applySavingsChange(lines.join("\n"));
 }
 
@@ -761,9 +823,11 @@ function buildModel() {
       target: num(kv["Target"]) || 50000,
       current: num(kv["Current savings"]),
       currentRaw: kv["Current savings"] || "",
+      planStart: num(kv["Plan start"]),
       monthly: monthlyStretch,
       monthlyFloor,
       monthlyStretch,
+      discCeiling: 383,
       deadline: kv["Deadline"] || "",
       remaining: num(kv["Remaining to goal"]),
       spending: num(kv["Spending account"]),
@@ -786,30 +850,23 @@ function buildModel() {
     m.savings.monthSalary = num(salaryCell) || 0;
     m.savings.rate = m.savings.monthSalary > 0 ? (m.savings.monthSaved / m.savings.monthSalary) * 100 : null;
 
-    /* Sunday review checklist — items carry their absolute line index for write-back */
-    const sLines = fSavings.split("\n");
-    const rStart = sLines.findIndex((l) => /^##\s+weekly sunday review/i.test(l.trim()));
-    if (rStart !== -1) {
-      let rEnd = sLines.length;
-      for (let i = rStart + 1; i < sLines.length; i++) {
-        if (/^##\s/.test(sLines[i])) { rEnd = i; break; }
+    /* Review Log — parse "### <date>" entries with their `- Key: value` fields */
+    const logBody = section(fSavings, "## Review Log");
+    const entries = [];
+    let cur = null;
+    logBody.split("\n").forEach((ln) => {
+      const h = ln.trim().match(/^###\s+(.+)$/);
+      if (h) {
+        cur = { dateRaw: h[1].trim(), date: new Date(h[1].replace(/\(.*\)/, "").trim()), fields: {} };
+        entries.push(cur);
+        return;
       }
-      const items = [];
-      let weekOf = null;
-      for (let i = rStart + 1; i < rEnd; i++) {
-        const t = sLines[i].trim();
-        const wm = t.match(/^\*week of:\s*([0-9-]+)\*/i);
-        if (wm) weekOf = wm[1];
-        if (/^- \[[ xX]\]/.test(t)) {
-          items.push({ done: /\[[xX]\]/.test(t), text: t.replace(/^- \[[ xX]\]\s*/, ""), line: i });
-        }
-      }
-      m.review = {
-        items, weekOf,
-        stale: weekOf !== weekOfMonday(),
-        doneCount: items.filter((x) => x.done).length,
-      };
-    }
+      const fm = ln.trim().match(/^[-*]\s*([^:]+):\s*(.*)$/);
+      if (cur && fm) cur.fields[fm[1].trim().toLowerCase()] = fm[2].trim();
+    });
+    const thisMon = weekOfMonday();
+    const thisWeek = entries.find((e) => !isNaN(e.date) && mondayOf(e.date) === thisMon);
+    m.review = { entries, thisWeek, thisMon };
   }
 
   if (f.debts) {
@@ -1317,29 +1374,55 @@ function renderMoney(m) {
       : `<div class="bar-sub" style="margin-top:10px"><span>Not logged yet this month</span><span>${dueThisMonth.toLocaleString()} MAD to floor</span></div>`}
   </div>`;
 
-  /* ---- Sunday review ---- */
+  /* ---- Sunday review (form + history) ---- */
   let reviewCard = "";
   if (m.review) {
     const r = m.review;
     const isSunday = new Date().getDay() === 0;
-    const allDone = r.items.length > 0 && r.doneCount === r.items.length;
+    const done = r.thisWeek && !state.reviewEdit;
     const dis = state.busy ? "disabled" : "";
-    const badge = r.stale
-      ? `<span class="chip warn">${isSunday ? "due today" : "due"}</span>`
-      : allDone
-        ? `<span class="chip ok">done ✓</span>`
-        : `<span class="chip info">${r.doneCount}/${r.items.length}</span>`;
-    reviewCard = `
-    <div class="card">
-      <h2>Sunday Review ${badge}</h2>
-      ${r.stale ? `<p class="muted review-note">New week — start fresh. ${r.weekOf ? `Last: ${esc(r.weekOf)}` : ""}</p>` : ""}
-      ${r.items.map((it) => `
-        <button class="review-item ${it.done && !r.stale ? "done" : ""}" data-review-line="${it.line}" ${r.stale ? "disabled" : dis}>
-          <span class="box">${it.done && !r.stale ? "✓" : ""}</span>
-          <span class="ri-text">${esc(it.text)}</span>
-        </button>`).join("")}
-      ${r.stale ? `<button class="show-toggle" id="btn-review-reset" ${dis}>Start this week's review</button>` : ""}
-    </div>`;
+    const badge = done
+      ? `<span class="chip ok">done ✓</span>`
+      : `<span class="chip ${isSunday ? "warn" : "info"}">${isSunday ? "due today" : "due this week"}</span>`;
+
+    if (done) {
+      const f = r.thisWeek.fields;
+      reviewCard = `
+      <div class="card">
+        <h2>Sunday Review ${badge}</h2>
+        <p class="muted review-note">Reviewed ${esc(r.thisWeek.dateRaw)}.</p>
+        <div class="month-saved">
+          ${f.balance ? `<div class="ms-row"><span>Balance</span><b>${esc(f.balance)}</b></div>` : ""}
+          ${f["spent this week"] ? `<div class="ms-row"><span>Spent this week</span><span>${esc(f["spent this week"])}</span></div>` : ""}
+          ${f.discretionary ? `<div class="ms-row"><span>Discretionary</span><span>${esc(f.discretionary)}</span></div>` : ""}
+          ${f["monk mode"] ? `<div class="ms-row"><span>Monk mode</span><span>${esc(f["monk mode"])}</span></div>` : ""}
+        </div>
+        <button class="show-toggle" id="btn-review-again" ${dis}>Review again</button>
+      </div>`;
+    } else {
+      const monkOpts = ["Yes", "Mostly", "No"];
+      const pick = state.reviewMonk;
+      reviewCard = `
+      <div class="card">
+        <h2>Sunday Review ${badge}</h2>
+        <p class="muted review-note">Fill this in, tap Save — it logs a dated entry and updates your savings + tracker.</p>
+        <label class="rv-label">Savings account balance (MAD)</label>
+        <input type="number" inputmode="decimal" id="rv-balance" placeholder="${s.current ? fmtNum(s.current) : "0"}" value="">
+        <label class="rv-label">Total spent this week (MAD)</label>
+        <input type="number" inputmode="decimal" id="rv-spent" placeholder="0">
+        <label class="rv-label">Discretionary this week (MAD) <span class="muted">· ceiling ${s.discCeiling || 383}</span></label>
+        <input type="number" inputmode="decimal" id="rv-disc" placeholder="0">
+        <label class="rv-label">In monk mode this week?</label>
+        <div class="seg rv-seg">
+          ${monkOpts.map((o) => `<button type="button" data-monk="${o}" class="${pick === o ? "active" : ""}">${o}</button>`).join("")}
+        </div>
+        <label class="rv-label">Notes / near-misses <span class="muted">· optional</span></label>
+        <input type="text" id="rv-notes" placeholder="Anything worth remembering…">
+        <div style="height:12px"></div>
+        <button class="btn" id="btn-review-save" ${dis}>Save review</button>
+        ${r.thisWeek ? `<button class="show-toggle" id="btn-review-cancel">Cancel</button>` : ""}
+      </div>`;
+    }
   }
 
   /* ---- monthly tracker (compact, projections behind a toggle) ---- */
@@ -1622,11 +1705,29 @@ function render() {
   if (v === "money") {
     const tt = $("#btn-tracker-toggle");
     if (tt) tt.onclick = () => { state.trackerExpanded = !state.trackerExpanded; render(); };
-    document.querySelectorAll("[data-review-line]").forEach((b) => {
-      b.onclick = () => toggleReview(parseInt(b.dataset.reviewLine, 10));
+
+    /* monk-mode segmented pick — toggle locally, no full re-render (keeps inputs) */
+    document.querySelectorAll("[data-monk]").forEach((b) => {
+      b.onclick = () => {
+        state.reviewMonk = b.dataset.monk;
+        document.querySelectorAll("[data-monk]").forEach((x) => x.classList.toggle("active", x === b));
+      };
     });
-    const rr = $("#btn-review-reset");
-    if (rr) rr.onclick = () => resetReviewWeek();
+    const againBtn = $("#btn-review-again");
+    if (againBtn) againBtn.onclick = () => { state.reviewEdit = true; state.reviewMonk = null; render(); };
+    const cancelBtn = $("#btn-review-cancel");
+    if (cancelBtn) cancelBtn.onclick = () => { state.reviewEdit = false; state.reviewMonk = null; render(); };
+    const saveBtn = $("#btn-review-save");
+    if (saveBtn) saveBtn.onclick = () => {
+      const valOf = (id) => { const el = $(id); const n = el && el.value.trim() !== "" ? num(el.value) : null; return n; };
+      saveReview({
+        balance: valOf("#rv-balance"),
+        spent: valOf("#rv-spent"),
+        disc: valOf("#rv-disc"),
+        monk: state.reviewMonk,
+        notes: ($("#rv-notes")?.value || "").trim(),
+      });
+    };
   }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
