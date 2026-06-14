@@ -479,6 +479,63 @@ input::placeholder { color: var(--muted); }
   vertical-align: 1px;
 }
 .right { text-align: right; }
+/* ---------- finances — monk mode ---------- */
+
+.monk-goal { border-color: var(--accent); }
+.monk-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 8px; margin-bottom: 10px;
+}
+.monk-tag {
+  font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em;
+  color: var(--accent);
+}
+.monk-sub { font-size: 0.72rem; color: var(--muted); text-align: right; }
+
+/* milestone markers on the goal bar */
+.ms-bar { position: relative; overflow: visible; }
+.ms-mark {
+  position: absolute; top: -2px; width: 2px; height: 14px;
+  background: var(--muted); transform: translateX(-1px); border-radius: 1px;
+}
+.ms-mark.hit { background: var(--btn-fg); opacity: 0.85; }
+
+/* this-month grid */
+.month-grid { display: flex; gap: 10px; }
+.month-grid .mg-cell {
+  flex: 1; min-width: 0; background: var(--surface2);
+  border-radius: 10px; padding: 11px 12px;
+}
+.mg-val { font-size: 1.15rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+.mg-arrow { color: var(--muted); margin: 0 4px; font-weight: 500; }
+.mg-lbl { font-size: 0.68rem; color: var(--muted); margin-top: 3px; line-height: 1.3; }
+.month-saved { margin-top: 12px; display: flex; flex-direction: column; gap: 7px; }
+.ms-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; }
+.ms-row span:first-child { color: var(--muted); }
+
+/* Sunday review checklist */
+.review-note { font-size: 0.74rem; line-height: 1.4; margin-bottom: 8px; }
+.review-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  width: 100%; padding: 9px 4px; text-align: left;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); cursor: pointer; border-radius: 8px; font-family: inherit;
+  font-size: 0.86rem;
+}
+.review-item:last-of-type { border-bottom: none; }
+.review-item:active { background: var(--surface2); }
+.review-item[disabled] { opacity: 0.5; }
+.review-item .box {
+  flex-shrink: 0; width: 19px; height: 19px;
+  border: 1.5px solid var(--muted); border-radius: 6px;
+  margin-top: 1px; text-align: center; line-height: 17px; font-size: 12px;
+}
+.review-item.done .box { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.review-item.done .ri-text { color: var(--muted); text-decoration: line-through; }
+.ri-text { flex: 1; min-width: 0; line-height: 1.4; }
+
+.pill-xs { font-size: 0.65rem; padding: 2px 7px; }
+
 /* ---------- finances — compact tracker rows ---------- */
 
 .tracker-row {

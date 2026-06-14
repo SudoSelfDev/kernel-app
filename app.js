@@ -72,6 +72,7 @@ function launchConfetti() {
 
 let _dailyTimer = null;
 let _habitTimer = null;
+let _savingsTimer = null;
 const SAVE_DELAY = 2000;
 
 /* ---------- icons (feather-style, stroke = currentColor) ---------- */
@@ -229,12 +230,13 @@ async function syncAll() {
   if (!getToken()) return;
   if (_dailyTimer) { clearTimeout(_dailyTimer); _dailyTimer = null; }
   if (_habitTimer) { clearTimeout(_habitTimer); _habitTimer = null; }
+  if (_savingsTimer) { clearTimeout(_savingsTimer); _savingsTimer = null; }
   setSyncStatus("Syncing…");
   state.error = null;
   try {
     const [clients, savings, debts, study, daily, schedule, researchDir, masterplan, habits] = await Promise.all([
       fetchRaw(PATHS.clients),
-      fetchRaw(PATHS.savings),
+      fetchWithSha(PATHS.savings),
       fetchRaw(PATHS.debts),
       fetchRaw(PATHS.study, { optional: true }),
       fetchWithSha(todayNotePath(), { optional: true }),
@@ -488,6 +490,88 @@ function removeHabit(name) {
   applyHabitChange(lines.join("\n"));
 }
 
+/* ---------- savings writes (Sunday Review) ---------- */
+
+function applySavingsChange(newText) {
+  const s = state.files.savings;
+  state.files.savings = { text: newText, sha: s ? s.sha : null };
+  render();
+  if (_savingsTimer) clearTimeout(_savingsTimer);
+  _savingsTimer = setTimeout(flushSavings, SAVE_DELAY);
+}
+
+async function flushSavings() {
+  _savingsTimer = null;
+  const s = state.files.savings;
+  if (!s) return;
+  state.busy = true;
+  render();
+  try {
+    const sha = await putFile(PATHS.savings, s.text, "kernel-app: update Sunday review", s.sha ?? undefined);
+    state.files.savings.sha = sha;
+    state.lastSync = Date.now();
+    saveCache();
+    state.error = null;
+  } catch (e) {
+    if (e.message === "auth-write") {
+      state.error = "Write rejected — your token needs Contents: Read and write to save the review.";
+    } else if (e.message === "conflict") {
+      state.error = "The savings plan changed on GitHub since last sync. Refreshing — try again.";
+      state.busy = false;
+      await syncAll();
+      return;
+    } else {
+      state.error = "Couldn't save — check your connection and try again.";
+    }
+  }
+  state.busy = false;
+  render();
+}
+
+/* Monday (ISO) of the current week, as YYYY-MM-DD — the review's "week of" key */
+function weekOfMonday() {
+  const d = new Date();
+  const day = (d.getDay() + 6) % 7; // 0 = Monday
+  d.setDate(d.getDate() - day);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function savingsText() {
+  const s = state.files.savings;
+  return s ? (typeof s === "string" ? s : s.text) : "";
+}
+
+/* toggle one Sunday-review checklist item by its absolute line index */
+function toggleReview(lineIdx) {
+  if (state.busy) return;
+  const lines = savingsText().split("\n");
+  const l = lines[lineIdx];
+  if (!/^- \[[ xX]\]/.test((l || "").trim())) return;
+  lines[lineIdx] = /\[[xX]\]/.test(l) ? l.replace(/\[[xX]\]/, "[ ]") : l.replace("[ ]", "[x]");
+  applySavingsChange(lines.join("\n"));
+}
+
+/* clear all review checkboxes and stamp the new week */
+function resetReviewWeek() {
+  if (state.busy) return;
+  const text = savingsText();
+  const lines = text.split("\n");
+  const start = lines.findIndex((l) => /^##\s+weekly sunday review/i.test(l.trim()));
+  if (start === -1) return;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i])) { end = i; break; }
+  }
+  for (let i = start + 1; i < end; i++) {
+    if (/^- \[[ xX]\]/.test(lines[i].trim())) lines[i] = lines[i].replace(/\[[xX]\]/, "[ ]");
+  }
+  const stamp = `*Week of: ${weekOfMonday()}*`;
+  const markIdx = lines.findIndex((l, i) => i > start && i < end && /^\*week of:/i.test(l.trim()));
+  if (markIdx !== -1) lines[markIdx] = stamp;
+  else lines.splice(start + 1, 0, "", stamp);
+  applySavingsChange(lines.join("\n"));
+}
+
 /* ---------- markdown parsing ---------- */
 
 function section(md, heading) {
@@ -643,7 +727,7 @@ function buildModel() {
   const f = state.files;
   const m = {
     active: [], leads: [], churned: [], savings: {}, debts: [], debtTotal: null,
-    study: null, tasks: null, schedule: null, articles: [],
+    study: null, tasks: null, schedule: null, articles: [], review: null,
   };
 
   if (f.clients) {
@@ -654,31 +738,76 @@ function buildModel() {
     m.churned = parseTable(section(f.clients, "## Churned"));
   }
 
-  if (f.savings) {
-    const goal = parseTable(section(f.savings, "## Goal"));
+  const fSavings = f.savings ? (typeof f.savings === "string" ? f.savings : f.savings.text) : null;
+  if (fSavings) {
+    const goal = parseTable(section(fSavings, "## Goal"));
     const kv = {};
     goal.forEach((r) => {
       const vals = Object.values(r);
       if (vals.length >= 2) kv[vals[0].replace(/\*/g, "")] = vals[1].replace(/\*/g, "");
     });
+
+    /* monthly target range — the "Savings out (first)" rows in the budget section
+       (floor = low-salary month, stretch = high-salary month) */
+    const budget = section(fSavings, "## Monk Mode Monthly Budget");
+    const outs = (budget.match(/savings out[^|]*\|\s*\**\s*([\d,]+)/gi) || [])
+      .map((x) => num(x)).filter((n) => n);
+    const monthlyFloor = outs.length ? Math.min(...outs) : (num(kv["Strict mode monthly target"]) || 5500);
+    const monthlyStretch = outs.length ? Math.max(...outs) : monthlyFloor;
+
     m.savings = {
       target: num(kv["Target"]) || 50000,
       current: num(kv["Current savings"]),
       currentRaw: kv["Current savings"] || "",
-      monthly: num(kv["Strict mode monthly target"]),
+      monthly: monthlyStretch,
+      monthlyFloor,
+      monthlyStretch,
       deadline: kv["Deadline"] || "",
-      tracker: parseTable(section(f.savings, "## Progress Tracker")),
+      remaining: num(kv["Remaining to goal"]),
+      spending: num(kv["Spending account"]),
+      paymentsLeft: num(kv["Salary payments left"]),
+      salaryDay: num(kv["Salary day"]) || 28,
+      tracker: parseTable(section(fSavings, "## Progress Tracker")),
     };
-    /* this month's actuals, for the coach card — tracker rows are projections
-       until Nadia logs real numbers (marked with ✓) */
+
+    /* this month's actual — a tracker row with a numeric Saved cell counts as logged */
     const now = new Date();
     const mShort = now.toLocaleDateString("en-US", { month: "short" });
     const row = m.savings.tracker.find((r) => {
       const v = Object.values(r)[0] || "";
       return v.includes(mShort) && v.includes(String(now.getFullYear()));
     });
-    const savedCell = row ? Object.values(row)[3] || "" : "";
-    m.savings.monthSaved = savedCell.includes("✓") ? (num(savedCell) || 0) : 0;
+    const vals = row ? Object.values(row) : [];
+    const savedCell = vals[3] || "";          // Saved (MAD)
+    const salaryCell = vals[1] || "";          // Salary (MAD)
+    m.savings.monthSaved = num(savedCell) || 0;
+    m.savings.monthSalary = num(salaryCell) || 0;
+    m.savings.rate = m.savings.monthSalary > 0 ? (m.savings.monthSaved / m.savings.monthSalary) * 100 : null;
+
+    /* Sunday review checklist — items carry their absolute line index for write-back */
+    const sLines = fSavings.split("\n");
+    const rStart = sLines.findIndex((l) => /^##\s+weekly sunday review/i.test(l.trim()));
+    if (rStart !== -1) {
+      let rEnd = sLines.length;
+      for (let i = rStart + 1; i < sLines.length; i++) {
+        if (/^##\s/.test(sLines[i])) { rEnd = i; break; }
+      }
+      const items = [];
+      let weekOf = null;
+      for (let i = rStart + 1; i < rEnd; i++) {
+        const t = sLines[i].trim();
+        const wm = t.match(/^\*week of:\s*([0-9-]+)\*/i);
+        if (wm) weekOf = wm[1];
+        if (/^- \[[ xX]\]/.test(t)) {
+          items.push({ done: /\[[xX]\]/.test(t), text: t.replace(/^- \[[ xX]\]\s*/, ""), line: i });
+        }
+      }
+      m.review = {
+        items, weekOf,
+        stale: weekOf !== weekOfMonday(),
+        doneCount: items.filter((x) => x.done).length,
+      };
+    }
   }
 
   if (f.debts) {
@@ -1122,79 +1251,176 @@ function renderClients(m) {
   ${m.scripts.length ? scriptsCard(m) : ""}`;
 }
 
+/* days until the next salary day (the Nth of a month) */
+function daysUntilSalary(day) {
+  const now = new Date();
+  let next = new Date(now.getFullYear(), now.getMonth(), day);
+  if (next < new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
+    next = new Date(now.getFullYear(), now.getMonth() + 1, day);
+  }
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((next - today) / 86400000);
+}
+
+/* monthly savings-rate band, per the monk-mode article */
+function rateBand(rate) {
+  if (rate === null) return ["dim", "—"];
+  if (rate >= 65) return ["ok", "Deep monk mode"];
+  if (rate >= 55) return ["ok", "Monk mode"];
+  if (rate >= 40) return ["warn", "Slipping"];
+  return ["bad", "Off monk mode"];
+}
+
 function renderMoney(m) {
   const s = m.savings;
   const pct = s.current && s.target ? Math.min(100, (s.current / s.target) * 100) : 0;
   const nowM = new Date().toLocaleDateString("en-US", { month: "short" });
   const nowY = String(new Date().getFullYear());
-  const monthly = s.monthly || 5500;
-  const remaining = Math.max(0, monthly - (s.monthSaved || 0));
+  const floor = s.monthlyFloor || s.monthly || 4883;
+  const stretch = s.monthlyStretch || s.monthly || 5500;
+  const remaining = s.remaining !== null && s.remaining !== undefined
+    ? s.remaining
+    : Math.max(0, (s.target || 0) - (s.current || 0));
+  const dueThisMonth = Math.max(0, floor - (s.monthSaved || 0));
 
+  /* milestone markers on the goal bar */
+  const milestones = [20000, 35000, 50000].filter((v) => v < (s.target || 50000) || v === 50000);
+  const markers = milestones.map((v) => {
+    const left = Math.min(100, (v / (s.target || 50000)) * 100);
+    const hit = (s.current || 0) >= v;
+    return `<span class="ms-mark ${hit ? "hit" : ""}" style="left:${left}%" title="${v.toLocaleString()} MAD"></span>`;
+  }).join("");
+
+  /* ---- this month ---- */
+  const salaryDays = daysUntilSalary(s.salaryDay || 28);
+  const [bandCls, bandLabel] = rateBand(s.rate ?? null);
+  const monthCard = `
+  <div class="card">
+    <h2>This Month <span class="h-extra muted">${nowM} ${nowY}</span></h2>
+    <div class="month-grid">
+      <div class="mg-cell">
+        <div class="mg-val">${salaryDays === 0 ? "Today" : `${salaryDays}d`}</div>
+        <div class="mg-lbl">next salary (${s.salaryDay || 28}th) — transfer first</div>
+      </div>
+      <div class="mg-cell">
+        <div class="mg-val">${floor.toLocaleString()}<span class="mg-arrow">→</span>${stretch.toLocaleString()}</div>
+        <div class="mg-lbl">monthly target (floor → stretch)</div>
+      </div>
+    </div>
+    ${s.monthSaved > 0
+      ? `<div class="month-saved">
+           <div class="ms-row"><span>Saved this month</span><b>${s.monthSaved.toLocaleString()} MAD</b></div>
+           ${s.rate !== null ? `<div class="ms-row"><span>Savings rate</span><span class="chip ${bandCls}">${s.rate.toFixed(0)}% · ${bandLabel}</span></div>` : ""}
+         </div>`
+      : `<div class="bar-sub" style="margin-top:10px"><span>Not logged yet this month</span><span>${dueThisMonth.toLocaleString()} MAD to floor</span></div>`}
+  </div>`;
+
+  /* ---- Sunday review ---- */
+  let reviewCard = "";
+  if (m.review) {
+    const r = m.review;
+    const isSunday = new Date().getDay() === 0;
+    const allDone = r.items.length > 0 && r.doneCount === r.items.length;
+    const dis = state.busy ? "disabled" : "";
+    const badge = r.stale
+      ? `<span class="chip warn">${isSunday ? "due today" : "due"}</span>`
+      : allDone
+        ? `<span class="chip ok">done ✓</span>`
+        : `<span class="chip info">${r.doneCount}/${r.items.length}</span>`;
+    reviewCard = `
+    <div class="card">
+      <h2>Sunday Review ${badge}</h2>
+      ${r.stale ? `<p class="muted review-note">New week — start fresh. ${r.weekOf ? `Last: ${esc(r.weekOf)}` : ""}</p>` : ""}
+      ${r.items.map((it) => `
+        <button class="review-item ${it.done && !r.stale ? "done" : ""}" data-review-line="${it.line}" ${r.stale ? "disabled" : dis}>
+          <span class="box">${it.done && !r.stale ? "✓" : ""}</span>
+          <span class="ri-text">${esc(it.text)}</span>
+        </button>`).join("")}
+      ${r.stale ? `<button class="show-toggle" id="btn-review-reset" ${dis}>Start this week's review</button>` : ""}
+    </div>`;
+  }
+
+  /* ---- monthly tracker (compact, projections behind a toggle) ---- */
   const trackerRows = (s.tracker || []).map((r) => {
     const vals = Object.values(r).map((v) => v.replace(/\*/g, ""));
     const month = vals[0] || "";
-    const isActual = (vals[3] || "").includes("✓");
-    const isCurrent = month.includes(nowM) && month.includes(nowY);
-    const isProj = !isActual && !isCurrent;
     const saved = num(vals[3]);
-    const savedStr = saved !== null ? `${saved.toLocaleString()} MAD` : (vals[3] || "").replace(/✓/g, "").trim() || "—";
-    const onTrack = (vals[5] || "").includes("✓") || /yes/i.test(vals[5] || "");
-    const barPct = (isActual || isCurrent) && saved !== null ? Math.min(100, Math.round((saved / monthly) * 100)) : 0;
-    let pill = isCurrent
+    const total = num(vals[4]);
+    const isCurrent = month.includes(nowM) && month.includes(nowY);
+    const isActual = saved !== null;
+    const isProj = !isActual && !isCurrent;
+    const onTrack = /✓|yes/i.test(vals[6] || "");
+    const offTrack = /✗|no/i.test(vals[6] || "");
+    const barPct = saved !== null ? Math.min(100, Math.round((saved / stretch) * 100)) : 0;
+    const pill = isCurrent && !isActual
       ? `<span class="tr-now">now</span>`
       : isActual
-        ? (onTrack ? `<span class="chip ok" style="font-size:0.65rem;padding:2px 7px">✓</span>` : `<span class="chip bad" style="font-size:0.65rem;padding:2px 7px">✗</span>`)
-        : `<span class="muted" style="font-size:0.72rem">projected</span>`;
+        ? (onTrack ? `<span class="chip ok pill-xs">✓</span>` : offTrack ? `<span class="chip bad pill-xs">✗</span>` : "")
+        : `<span class="muted pill-xs">projected</span>`;
+    const sub = isActual
+      ? `${saved.toLocaleString()} MAD saved${total !== null ? ` · ${total.toLocaleString()} total` : ""}`
+      : isCurrent ? "in progress" : "—";
     return {
       isProj,
       html: `<div class="tracker-row${isCurrent ? " tr-cur" : ""}${isProj ? " tr-proj" : ""}">
-        <div class="tr-head"><span class="tr-month">${esc(month)}</span>${pill}</div>
+        <div class="tr-head"><span class="tr-month">${esc(month.replace(/←.*$/, "").trim())}</span>${pill}</div>
         <div class="tr-bar"><div class="tr-bar-fill" style="width:${barPct}%"></div></div>
-        <div class="tr-amount">${isProj ? "—" : `${savedStr} saved`}</div>
+        <div class="tr-amount">${sub}</div>
       </div>`,
     };
   });
 
-  return `
-  <div class="card">
-    <h2>Savings Goal <span class="h-extra muted">${esc(s.deadline.split("(")[0] || "")}</span></h2>
-    <div class="big-number">${s.current ? s.current.toLocaleString() : "—"} <small>/ ${s.target ? s.target.toLocaleString() : "—"} MAD</small></div>
-    <div class="bar"><div style="width:${pct}%"></div></div>
-    <div class="bar-sub"><span>${pct.toFixed(1)}%</span><span>${remaining === 0 ? "monthly target hit ✓" : `this month: ${remaining.toLocaleString()} MAD to go`}</span></div>
-  </div>
-
-  <div class="card locked">
-    <h2>Emergency Fund</h2>
-    <div class="row"><div class="r-main"><div class="r-title">9,450 MAD</div>
-    <div class="r-sub">Ring-fenced — not part of the goal</div></div>
-    <div class="r-end"><span class="chip dim">🔒 locked</span></div></div>
-  </div>
-
-  <div class="card">
-    <h2>Owed to me ${m.debtTotal ? `<span class="h-extra">${m.debtTotal.toLocaleString()} MAD</span>` : ""}</h2>
-    ${m.debts.map((d) => {
-      const [cls, label] = statusChip(d.status);
-      return `<div class="row">
-        <div class="r-main"><div class="r-title">${esc(d.name)}</div></div>
-        <div class="r-end"><b>${d.amount ? d.amount.toLocaleString() : "—"}</b> <span class="muted">MAD</span><br>
-        <span class="chip ${cls}" style="margin-top:4px">${esc(label)}</span></div>
-      </div>`;
-    }).join("") || `<div class="empty">No debts tracked</div>`}
-  </div>
-
-  ${trackerRows.length ? (() => {
-    const visible = trackerRows.filter(r => !r.isProj);
-    const proj = trackerRows.filter(r => r.isProj);
+  const trackerCard = trackerRows.length ? (() => {
+    const visible = trackerRows.filter((r) => !r.isProj);
+    const proj = trackerRows.filter((r) => r.isProj);
     const toggleBtn = proj.length
       ? `<button class="show-toggle" id="btn-tracker-toggle">${state.trackerExpanded ? "Show less" : `+ ${proj.length} projected month${proj.length === 1 ? "" : "s"}`}</button>`
       : "";
     return `<div class="card">
       <h2>Monthly Tracker</h2>
-      ${visible.map(r => r.html).join("")}
-      ${state.trackerExpanded ? proj.map(r => r.html).join("") : ""}
+      ${visible.map((r) => r.html).join("")}
+      ${state.trackerExpanded ? proj.map((r) => r.html).join("") : ""}
       ${toggleBtn}
     </div>`;
-  })() : ""}`;
+  })() : "";
+
+  /* ---- windfall insurance (debts) ---- */
+  const debtCard = `
+  <div class="card">
+    <h2>Windfall Insurance ${m.debtTotal ? `<span class="h-extra">${m.debtTotal.toLocaleString()} MAD</span>` : ""}</h2>
+    <p class="muted review-note">Debts owed to you — insurance for the goal, not spending money. ${m.debtTotal && remaining ? `Covers ${Math.min(100, Math.round((m.debtTotal / remaining) * 100))}% of the gap to 50K.` : ""}</p>
+    ${m.debts.map((d) => {
+      const [cls, label] = statusChip(d.status);
+      return `<div class="row">
+        <div class="r-main"><div class="r-title">${esc(d.name)}</div></div>
+        <div class="r-end"><b>${d.amount ? d.amount.toLocaleString() : "—"}</b> <span class="muted">MAD</span>
+        <span class="chip ${cls}" style="margin-left:6px">${esc(label)}</span></div>
+      </div>`;
+    }).join("") || `<div class="empty">No debts tracked</div>`}
+  </div>`;
+
+  return `
+  <div class="card monk-goal">
+    <div class="monk-head">
+      <span class="monk-tag">⚡ MONK MODE</span>
+      <span class="monk-sub">${s.paymentsLeft ? `${s.paymentsLeft} salaries left` : ""}${s.deadline ? ` · ${esc(s.deadline.split("(")[0].trim())}` : ""}</span>
+    </div>
+    <div class="big-number">${s.current ? s.current.toLocaleString() : "—"} <small>/ ${s.target ? s.target.toLocaleString() : "—"} MAD</small></div>
+    <div class="bar ms-bar"><div style="width:${pct}%"></div>${markers}</div>
+    <div class="bar-sub"><span>${pct.toFixed(1)}%</span><span>${remaining > 0 ? `${remaining.toLocaleString()} MAD to go` : "goal reached ✓"}</span></div>
+  </div>
+
+  ${monthCard}
+  ${reviewCard}
+  ${trackerCard}
+  ${debtCard}
+
+  <div class="card locked">
+    <h2>Emergency Fund</h2>
+    <div class="row"><div class="r-main"><div class="r-title">9,450 MAD</div>
+    <div class="r-sub">The wall — ring-fenced, not available money</div></div>
+    <div class="r-end"><span class="chip dim">🔒 locked</span></div></div>
+  </div>`;
 }
 
 function renderHabits(m) {
@@ -1394,6 +1620,11 @@ function render() {
   if (v === "money") {
     const tt = $("#btn-tracker-toggle");
     if (tt) tt.onclick = () => { state.trackerExpanded = !state.trackerExpanded; render(); };
+    document.querySelectorAll("[data-review-line]").forEach((b) => {
+      b.onclick = () => toggleReview(parseInt(b.dataset.reviewLine, 10));
+    });
+    const rr = $("#btn-review-reset");
+    if (rr) rr.onclick = () => resetReviewWeek();
   }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
