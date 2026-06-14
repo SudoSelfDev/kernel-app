@@ -714,6 +714,14 @@ function statusChip(s) {
   return ["dim", s];
 }
 
+/* stable color per calendar name — hashes into a fixed palette */
+const CAL_PALETTE = ["#60a5fa", "#4ade80", "#fbbf24", "#f87171", "#a78bfa", "#fb923c", "#34d399", "#f472b6"];
+function calColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return CAL_PALETTE[h % CAL_PALETTE.length];
+}
+
 function daysUntil(dateStr) {
   const d = new Date(dateStr);
   if (isNaN(d)) return null;
@@ -1119,9 +1127,11 @@ function renderToday(m) {
     const hm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     scheduleHtml = m.schedule.events.map((e) => {
       const live = !e.allDay && e.start && e.end && hm >= e.start && hm < e.end;
+      const dot = e.cal ? `<span class="cal-dot" style="background:${calColor(e.cal)}" title="${esc(e.cal)}"></span>` : "";
+      const calTag = e.cal ? `<span class="cal-tag">${esc(e.cal)}</span>` : "";
       return `<div class="row">
-        <div class="r-main"><div class="r-title">${esc(e.title || "Busy")}</div>
-        <div class="r-sub">${e.allDay ? "All day" : `${esc(e.start || "?")} – ${esc(e.end || "?")}`}</div></div>
+        <div class="r-main"><div class="r-title">${dot}${esc(e.title || "Busy")}</div>
+        <div class="r-sub">${e.allDay ? "All day" : `${esc(e.start || "?")} – ${esc(e.end || "?")}`}${calTag}</div></div>
         <div class="r-end">${live ? `<span class="chip ok">now</span>` : ""}</div>
       </div>`;
     }).join("");
