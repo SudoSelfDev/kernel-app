@@ -358,9 +358,10 @@ function addTasks(texts) {
     for (let i = h + 1; i < lines.length; i++) {
       if (/^#+\s/.test(lines[i])) { end = i; break; }
     }
+    /* insert at the top of the list — before the first existing task */
     let insert = -1;
     for (let i = h + 1; i < end; i++) {
-      if (/^- \[/.test(lines[i].trim())) insert = i + 1;
+      if (/^- \[/.test(lines[i].trim())) { insert = i; break; }
     }
     if (insert === -1) {
       insert = h + 1;
