@@ -236,7 +236,7 @@ async function syncAll() {
   try {
     const [clients, savings, debts, study, daily, schedule, researchDir, masterplan, habits] = await Promise.all([
       fetchRaw(PATHS.clients),
-      fetchWithSha(PATHS.savings),
+      fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
       fetchRaw(PATHS.study, { optional: true }),
       fetchWithSha(todayNotePath(), { optional: true }),
@@ -493,8 +493,9 @@ function removeHabit(name) {
 /* ---------- savings writes (Sunday Review) ---------- */
 
 function applySavingsChange(newText) {
-  const s = state.files.savings;
-  state.files.savings = { text: newText, sha: s ? s.sha : null };
+  /* savings is read as raw text in syncAll; keep it as a string here so the
+     model reads it the same way, and fetch a fresh sha at write time */
+  state.files.savings = newText;
   render();
   if (_savingsTimer) clearTimeout(_savingsTimer);
   _savingsTimer = setTimeout(flushSavings, SAVE_DELAY);
@@ -502,13 +503,14 @@ function applySavingsChange(newText) {
 
 async function flushSavings() {
   _savingsTimer = null;
-  const s = state.files.savings;
-  if (!s) return;
+  const text = savingsText();
+  if (!text) return;
   state.busy = true;
   render();
   try {
-    const sha = await putFile(PATHS.savings, s.text, "kernel-app: update Sunday review", s.sha ?? undefined);
-    state.files.savings.sha = sha;
+    /* fetch a fresh sha right before writing — avoids stale-sha conflicts */
+    const meta = await fetchWithSha(PATHS.savings);
+    await putFile(PATHS.savings, text, "kernel-app: update Sunday review", meta.sha);
     state.lastSync = Date.now();
     saveCache();
     state.error = null;
