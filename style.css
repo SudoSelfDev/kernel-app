@@ -367,6 +367,27 @@ input::placeholder { color: var(--muted); }
 }
 .script-copy { flex-shrink: 0; color: var(--muted); display: flex; }
 
+/* ---------- search bar ---------- */
+
+.search-bar {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0 12px;
+}
+.search-bar:focus-within { border-color: var(--accent); }
+.search-bar svg { color: var(--muted); flex-shrink: 0; }
+.search-bar input {
+  flex: 1; background: none; border: none; border-radius: 0;
+  padding: 12px 0; font-size: 0.92rem; color: var(--text);
+}
+.search-bar input:focus { outline: none; }
+.search-bar input::-webkit-search-cancel-button { display: none; }
+.search-clear {
+  flex-shrink: 0; background: none; border: none; color: var(--muted);
+  cursor: pointer; display: flex; align-items: center; padding: 4px;
+}
+.search-clear:active { color: var(--text); }
+
 /* ---------- articles ---------- */
 
 .art-card {

@@ -30,6 +30,7 @@ const state = {
   openClient: null,   // "tab:index" of the expanded client row, or null
   scriptsOpen: false, // DM Scripts card collapsed by default
   article: null,      // name of the open article, or null for the list
+  articleQuery: "",   // Read-tab search filter
   files: {},          // clients/savings/debts/study/schedule: raw · daily: {text, sha}|null · articles: [{name, text}]
   lastSync: null,
   error: null,
@@ -90,6 +91,7 @@ const ICONS = {
   phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
   chevronDown: '<polyline points="6 9 12 15 18 9"/>',
   checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.27"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>',
 };
 
 const icon = (name, size = 20) =>
@@ -1243,12 +1245,30 @@ function renderArticles(m) {
     state.article = null;
   }
   if (!m.articles.length) return `<div class="empty">No research articles in the vault yet</div>`;
-  return m.articles.map((a) => `
-    <button class="card art-card" data-article="${esc(a.name)}">
-      <div class="art-title">${esc(a.title)}</div>
-      ${a.excerpt ? `<div class="art-excerpt">${esc(a.excerpt)}</div>` : ""}
-      <div class="art-meta">${esc(a.created)}${a.topic ? ` · ${esc(a.topic)}` : ""} · ${a.minutes} min read</div>
-    </button>`).join("");
+
+  const q = state.articleQuery.trim().toLowerCase();
+  const matches = q
+    ? m.articles.filter((a) =>
+        [a.title, a.excerpt, a.topic, a.author, a.body].some((f) => (f || "").toLowerCase().includes(q)))
+    : m.articles;
+
+  const search = `
+    <div class="search-bar">
+      ${icon("search", 17)}
+      <input type="search" id="art-search" placeholder="Search articles…" value="${esc(state.articleQuery)}" autocomplete="off">
+      ${q ? `<button class="search-clear" id="art-search-clear" aria-label="Clear search">${icon("x", 16)}</button>` : ""}
+    </div>`;
+
+  const list = matches.length
+    ? matches.map((a) => `
+      <button class="card art-card" data-article="${esc(a.name)}">
+        <div class="art-title">${esc(a.title)}</div>
+        ${a.excerpt ? `<div class="art-excerpt">${esc(a.excerpt)}</div>` : ""}
+        <div class="art-meta">${esc(a.created)}${a.topic ? ` · ${esc(a.topic)}` : ""} · ${a.minutes} min read</div>
+      </button>`).join("")
+    : `<div class="empty">No articles match "${esc(state.articleQuery)}"</div>`;
+
+  return search + list;
 }
 
 function renderSettings() {
@@ -1381,6 +1401,18 @@ function render() {
     });
     const back = $("#btn-art-back");
     if (back) back.onclick = () => { state.article = null; showBars(); render(); scrollTo(0, 0); };
+    const search = $("#art-search");
+    if (search) {
+      search.oninput = () => {
+        state.articleQuery = search.value;
+        const pos = search.selectionStart;
+        render();
+        const again = $("#art-search");
+        if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+      };
+    }
+    const clr = $("#art-search-clear");
+    if (clr) clr.onclick = () => { state.articleQuery = ""; render(); const s = $("#art-search"); if (s) s.focus(); };
   }
   if (v === "settings") {
     document.querySelectorAll("[data-theme-pref]").forEach((b) => {
