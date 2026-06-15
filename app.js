@@ -50,19 +50,31 @@ function launchConfetti() {
   document.body.appendChild(canvas);
   const ctx = canvas.getContext("2d");
   const colors = ["#4ade80","#fbbf24","#60a5fa","#f87171","#a78bfa","#fb923c","#34d399"];
-  const pieces = Array.from({ length: 90 }, () => ({
-    x: Math.random() * canvas.width, y: -10 - Math.random() * 120,
-    r: 4 + Math.random() * 5,
-    color: colors[Math.floor(Math.random() * colors.length)],
-    vx: (Math.random() - 0.5) * 4, vy: 2.5 + Math.random() * 3,
-    angle: Math.random() * Math.PI * 2, vr: (Math.random() - 0.5) * 0.18,
-    aspect: 0.35 + Math.random() * 0.5,
-  }));
+  const W = canvas.width, H = canvas.height;
+  const pieces = [];
+  /* two poppers fire up from the bottom corners and fan toward the middle */
+  const cannon = (originX, dir) => {
+    for (let i = 0; i < 45; i++) {
+      const angle = -Math.PI / 2 + dir * (0.05 + Math.random() * 0.6); // up, fanned inward
+      const speed = 9 + Math.random() * 8;
+      pieces.push({
+        x: originX, y: H + 8,
+        r: 4 + Math.random() * 5,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed, // negative = upward
+        angle: Math.random() * Math.PI * 2, vr: (Math.random() - 0.5) * 0.3,
+        aspect: 0.35 + Math.random() * 0.5,
+      });
+    }
+  };
+  cannon(W * 0.12, 1);   // bottom-left → fan right
+  cannon(W * 0.88, -1);  // bottom-right → fan left
   const start = Date.now();
   (function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, W, H);
     pieces.forEach((p) => {
-      p.x += p.vx; p.y += p.vy; p.vy += 0.09; p.angle += p.vr;
+      p.x += p.vx; p.y += p.vy; p.vy += 0.22; p.vx *= 0.99; p.angle += p.vr;
       ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
       ctx.fillStyle = p.color;
       ctx.fillRect(-p.r, -p.r * p.aspect, p.r * 2, p.r * 2 * p.aspect);
