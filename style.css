@@ -168,6 +168,7 @@ body.bars-hidden #tabbar {
   margin-top: 1px; text-align: center; line-height: 17px; font-size: 12px;
 }
 .task.done .box { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.task .txt { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .task.done .txt { color: var(--muted); text-decoration: line-through; }
 .task[disabled] { opacity: 0.5; }
 
