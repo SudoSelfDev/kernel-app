@@ -39,6 +39,8 @@ const state = {
   trackerExpanded: false, // show projected months in finances
   reviewEdit: false,  // force-show the Sunday review form even if done this week
   reviewMonk: null,   // pending monk-mode pick in the review form
+  debtEdit: null,     // person name being edited, "__new__" for the add form, or null
+  debtStatusPick: null, // pending status base in the debt form (Pending/Expected/Partial/Paid)
 };
 
 /* ---------- confetti ---------- */
@@ -561,6 +563,173 @@ async function flushSavings() {
   render();
 }
 
+/* ---------- debt writes (add / edit / mark-paid / remove on DebtLog ## Summary) ---------- */
+
+let _debtTimer = null;
+
+const debtsText = () => {
+  const d = state.files.debts;
+  return d ? (typeof d === "string" ? d : d.text) : "";
+};
+
+/* status presets — emoji+word are stored, an optional free-text "extra" (e.g. "~Jul 2026") trails */
+const DEBT_STATUS = [
+  { key: "Pending",  str: "⏳ Pending" },
+  { key: "Expected", str: "🟡 Expected" },
+  { key: "Partial",  str: "🔁 Partial" },
+  { key: "Paid",     str: "✅ Paid" },
+];
+
+/* "🟡 Expected ~Jul 2026" → { base: "Expected", extra: "~Jul 2026" } */
+function parseDebtStatus(s) {
+  const clean = (s || "").replace(/[⏳🟡🔁✅]/g, "").trim();
+  for (const o of DEBT_STATUS) {
+    const re = new RegExp(`\\b${o.key}\\b`, "i");
+    if (re.test(clean)) return { base: o.key, extra: clean.replace(re, "").trim() };
+  }
+  return { base: "Pending", extra: clean };
+}
+
+function buildDebtStatus(base, extra) {
+  const o = DEBT_STATUS.find((x) => x.key === base) || DEBT_STATUS[0];
+  return extra ? `${o.str} ${extra}` : o.str;
+}
+
+function applyDebtsChange(newText) {
+  state.files.debts = newText;
+  state.debtEdit = null;
+  state.debtStatusPick = null;
+  render();
+  if (_debtTimer) clearTimeout(_debtTimer);
+  _debtTimer = setTimeout(flushDebts, SAVE_DELAY);
+}
+
+async function flushDebts() {
+  _debtTimer = null;
+  const text = debtsText();
+  if (!text) return;
+  state.busy = true;
+  render();
+  try {
+    /* fresh raw read → local blob sha → conflict-safe write (same as savings) */
+    const serverText = await fetchRaw(PATHS.debts);
+    const baseSha = await gitBlobSha(serverText);
+    await putFile(PATHS.debts, text, "kernel-app: update debt tracker", baseSha);
+    state.lastSync = Date.now();
+    saveCache();
+    state.error = null;
+  } catch (e) {
+    if (e.message === "auth-write") {
+      state.error = "Write rejected — your token needs Contents: Read and write to save debts.";
+    } else if (e.message === "conflict") {
+      state.error = "The debt log changed on GitHub since last sync. Refreshing — try again.";
+      state.busy = false;
+      await syncAll();
+      return;
+    } else {
+      state.error = "Couldn't save — check your connection and try again.";
+    }
+  }
+  state.busy = false;
+  render();
+}
+
+/* inclusive line range {start,end} of the ## Summary table (header → last row incl. TOTAL) */
+function summaryRegion(lines) {
+  const h = lines.findIndex((l) => /^##\s+summary/i.test(l.trim()));
+  if (h === -1) return null;
+  let start = -1, end = -1;
+  for (let i = h + 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t.startsWith("|")) { if (start === -1) start = i; end = i; }
+    else if (start !== -1) break;     // table ended
+    else if (/^#+\s/.test(t)) break;  // next heading before any table
+  }
+  return start === -1 ? null : { start, end };
+}
+
+/* TOTAL = sum of outstanding (non-paid) debts; rewrites the **TOTAL** row in place */
+function recomputeTotal(lines) {
+  const region = summaryRegion(lines);
+  if (!region) return;
+  let sum = 0, totalRow = -1;
+  for (let i = region.start + 2; i <= region.end; i++) {  // +2 skips header + separator
+    const cells = lines[i].split("|");
+    if (cells.length < 4) continue;
+    const name = cells[1].replace(/\*/g, "").trim();
+    if (/^total$/i.test(name)) { totalRow = i; continue; }
+    if (/✅|paid/i.test(cells[3] || "")) continue;        // paid debts no longer back the goal
+    const amt = num(cells[2]);
+    if (amt != null) sum += amt;
+  }
+  if (totalRow !== -1) {
+    const cells = lines[totalRow].split("|");
+    cells[2] = ` **${fmtNum(sum)}** `;
+    lines[totalRow] = cells.join("|");
+  }
+}
+
+/* append a minimal per-person detail section just before ## Legend (additive, never deletes) */
+function addDetailStub(lines, v) {
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const block = [
+    "",
+    `## ${v.name}`,
+    "",
+    "| # | Amount | Date | Notes |",
+    "|---|---|---|---|",
+    `| 1 | ${fmtNum(v.amount)} DH | ${dateStr} | ${v.extra || "—"} |`,
+    `| **Total** | **${fmtNum(v.amount)} DH** | | |`,
+    "",
+    `**Status:** ${v.status}`,
+    "",
+    "---",
+  ];
+  const legendIdx = lines.findIndex((l) => /^##\s+legend/i.test(l.trim()));
+  if (legendIdx !== -1) lines.splice(legendIdx, 0, ...block, "");
+  else lines.push(...block);
+}
+
+/* create or update a Summary row by person name; recompute TOTAL; commit */
+function upsertDebt(v) {
+  const lines = debtsText().split("\n");
+  const region = summaryRegion(lines);
+  if (!region) { state.error = "Couldn't find the ## Summary table in DebtLog."; render(); return; }
+  const match = (v.originalName || v.name).trim().toLowerCase();
+  let rowIdx = -1, totalIdx = -1;
+  for (let i = region.start + 2; i <= region.end; i++) {
+    const cells = lines[i].split("|");
+    if (cells.length < 4) continue;
+    const nm = cells[1].replace(/\*/g, "").trim();
+    if (/^total$/i.test(nm)) { totalIdx = i; continue; }
+    if (nm.toLowerCase() === match) rowIdx = i;
+  }
+  const rowStr = `| ${v.name} | ${fmtNum(v.amount)} | ${v.status} |`;
+  if (rowIdx !== -1) {
+    lines[rowIdx] = rowStr;
+  } else {
+    lines.splice(totalIdx !== -1 ? totalIdx : region.end + 1, 0, rowStr);
+    addDetailStub(lines, v);  // give the new person a home in the file
+  }
+  recomputeTotal(lines);
+  applyDebtsChange(lines.join("\n"));
+}
+
+/* delete a person's Summary row (detail section left intact as history); recompute TOTAL */
+function removeDebt(name) {
+  const lines = debtsText().split("\n");
+  const region = summaryRegion(lines);
+  if (!region) return;
+  const target = name.trim().toLowerCase();
+  for (let i = region.start + 2; i <= region.end; i++) {
+    const cells = lines[i].split("|");
+    if (cells.length < 4) continue;
+    if (cells[1].replace(/\*/g, "").trim().toLowerCase() === target) { lines.splice(i, 1); break; }
+  }
+  recomputeTotal(lines);
+  applyDebtsChange(lines.join("\n"));
+}
+
 /* Monday (ISO) of the week containing date d, as YYYY-MM-DD */
 function mondayOf(d) {
   const x = new Date(d);
@@ -724,6 +893,7 @@ function statusChip(s) {
   if (s.includes("❌") || s.includes("🔴") || s.includes("⛔")) return ["bad", s];
   if (s.includes("🔵")) return ["info", s];
   if (s.includes("🟡") || s.includes("⏳")) return ["warn", s];
+  if (s.includes("🔁")) return ["info", s];
   return ["dim", s];
 }
 
@@ -1508,19 +1678,48 @@ function renderMoney(m) {
     </div>`;
   })() : "";
 
-  /* ---- windfall insurance (debts) ---- */
+  /* ---- windfall insurance (debts) — add / edit / mark-paid / remove ---- */
+  const dbusy = state.busy ? "disabled" : "";
+  let debtBody;
+  if (state.debtEdit) {
+    const editing = state.debtEdit !== "__new__";
+    const ex = editing ? m.debts.find((d) => d.name === state.debtEdit) : null;
+    const ps = parseDebtStatus(ex ? ex.status : "");
+    const basePick = state.debtStatusPick || ps.base;
+    debtBody = `
+      <label class="rv-label">Person</label>
+      <input type="text" id="db-name" placeholder="Who owes you" value="${editing ? esc(ex.name) : ""}" ${editing ? "readonly" : ""}>
+      <label class="rv-label">Amount (MAD)</label>
+      <input type="number" inputmode="decimal" id="db-amount" placeholder="0" value="${ex && ex.amount != null ? ex.amount : ""}">
+      <label class="rv-label">Status</label>
+      <div class="seg rv-seg">
+        ${DEBT_STATUS.map((o) => `<button type="button" data-debt-status="${o.key}" class="${basePick === o.key ? "active" : ""}">${o.key}</button>`).join("")}
+      </div>
+      <label class="rv-label">Status detail <span class="muted">· optional, e.g. ~Jul 2026</span></label>
+      <input type="text" id="db-extra" placeholder="timeline or note" value="${editing ? esc(ps.extra) : ""}">
+      <div style="height:12px"></div>
+      <button class="btn" id="btn-debt-save" ${dbusy}>${editing ? "Save changes" : "Add debt"}</button>
+      ${editing ? `<button class="show-toggle" id="btn-debt-paid" ${dbusy}>Mark paid ✅</button>
+                   <button class="show-toggle danger" id="btn-debt-remove" ${dbusy}>Remove debt</button>` : ""}
+      <button class="show-toggle" id="btn-debt-cancel">Cancel</button>`;
+  } else {
+    debtBody = `
+      ${m.debts.map((d) => {
+        const [cls, label] = statusChip(d.status);
+        return `<div class="row debt-row" data-debt-edit="${esc(d.name)}">
+          <div class="r-main"><div class="r-title">${esc(d.name)}</div></div>
+          <div class="r-end"><b>${d.amount ? d.amount.toLocaleString() : "—"}</b> <span class="muted">MAD</span>
+          <span class="chip ${cls}" style="margin-left:6px">${esc(label)}</span>
+          <span class="debt-edit-ic">✏️</span></div>
+        </div>`;
+      }).join("") || `<div class="empty">No debts tracked</div>`}
+      <button class="show-toggle" id="btn-debt-add">+ Add debt</button>`;
+  }
   const debtCard = `
   <div class="card">
     <h2>Windfall Insurance ${m.debtTotal ? `<span class="h-extra">${m.debtTotal.toLocaleString()} MAD</span>` : ""}</h2>
     <p class="muted review-note">Debts owed to you — insurance for the goal, not spending money. ${m.debtTotal && remaining ? `Covers ${Math.min(100, Math.round((m.debtTotal / remaining) * 100))}% of the gap to 50K.` : ""}</p>
-    ${m.debts.map((d) => {
-      const [cls, label] = statusChip(d.status);
-      return `<div class="row">
-        <div class="r-main"><div class="r-title">${esc(d.name)}</div></div>
-        <div class="r-end"><b>${d.amount ? d.amount.toLocaleString() : "—"}</b> <span class="muted">MAD</span>
-        <span class="chip ${cls}" style="margin-left:6px">${esc(label)}</span></div>
-      </div>`;
-    }).join("") || `<div class="empty">No debts tracked</div>`}
+    ${debtBody}
   </div>`;
 
   return `
@@ -1766,6 +1965,45 @@ function render() {
         monk: state.reviewMonk,
         notes: ($("#rv-notes")?.value || "").trim(),
       });
+    };
+
+    /* ---- debt editor ---- */
+    document.querySelectorAll("[data-debt-edit]").forEach((el) => {
+      el.onclick = () => { state.debtEdit = el.dataset.debtEdit; state.debtStatusPick = null; render(); };
+    });
+    const debtAdd = $("#btn-debt-add");
+    if (debtAdd) debtAdd.onclick = () => { state.debtEdit = "__new__"; state.debtStatusPick = null; render(); };
+    const debtCancel = $("#btn-debt-cancel");
+    if (debtCancel) debtCancel.onclick = () => { state.debtEdit = null; state.debtStatusPick = null; render(); };
+    document.querySelectorAll("[data-debt-status]").forEach((b) => {
+      b.onclick = () => {
+        state.debtStatusPick = b.dataset.debtStatus;
+        document.querySelectorAll("[data-debt-status]").forEach((x) => x.classList.toggle("active", x === b));
+      };
+    });
+    const debtSave = $("#btn-debt-save");
+    if (debtSave) debtSave.onclick = () => {
+      const editing = state.debtEdit !== "__new__";
+      const name = ($("#db-name")?.value || "").trim();
+      const amount = num($("#db-amount")?.value);
+      if (!name) { state.error = "Enter who owes you."; render(); return; }
+      if (amount == null) { state.error = "Enter an amount."; render(); return; }
+      const ex = editing ? m.debts.find((d) => d.name === state.debtEdit) : null;
+      const base = state.debtStatusPick || (ex ? parseDebtStatus(ex.status).base : "Pending");
+      const extra = ($("#db-extra")?.value || "").trim();
+      upsertDebt({ name, amount, extra, status: buildDebtStatus(base, extra), originalName: editing ? state.debtEdit : null });
+    };
+    const debtPaid = $("#btn-debt-paid");
+    if (debtPaid) debtPaid.onclick = () => {
+      const ex = m.debts.find((d) => d.name === state.debtEdit);
+      const amount = ex && ex.amount != null ? ex.amount : num($("#db-amount")?.value);
+      if (amount == null) { state.error = "Enter an amount before marking paid."; render(); return; }
+      upsertDebt({ name: state.debtEdit, amount, status: "✅ Paid", originalName: state.debtEdit });
+    };
+    const debtRemove = $("#btn-debt-remove");
+    if (debtRemove) debtRemove.onclick = () => {
+      if (!confirm(`Remove ${state.debtEdit} from the debt tracker? This deletes the summary row (the detail section stays as history).`)) return;
+      removeDebt(state.debtEdit);
     };
   }
   if (v === "articles") {
