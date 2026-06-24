@@ -41,6 +41,7 @@ const state = {
   reviewMonk: null,   // pending monk-mode pick in the review form
   debtEdit: null,     // person name being edited, "__new__" for the add form, or null
   debtStatusPick: null, // pending status base in the debt form (Pending/Expected/Partial/Paid)
+  taskEdit: null,     // absolute line index of the task being edited inline, or null
 };
 
 /* ---------- confetti ---------- */
@@ -102,6 +103,7 @@ const ICONS = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
+  pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   chevronLeft: '<polyline points="15 18 9 12 15 6"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   check: '<polyline points="20 6 9 17 4 12"/>',
@@ -349,6 +351,19 @@ function removeTask(lineIdx) {
   const label = t.replace(/^- \[[ xX]\]\s*/, "");
   if (!confirm(`Remove "${label}"?`)) return;
   lines.splice(lineIdx, 1);
+  applyDailyChange(lines.join("\n"));
+}
+
+/* rewrite a task's text in place, preserving indentation + checkbox state */
+function editTask(lineIdx, newText) {
+  const d = state.files.daily;
+  if (!d || state.busy) return;
+  const txt = newText.trim();
+  const lines = d.text.split("\n");
+  const prefix = (lines[lineIdx] || "").match(/^(\s*- \[[ xX]\]\s*)/);
+  if (!prefix || !txt) { state.taskEdit = null; render(); return; }
+  lines[lineIdx] = prefix[1] + txt;
+  state.taskEdit = null;
   applyDailyChange(lines.join("\n"));
 }
 
@@ -1291,14 +1306,20 @@ function renderToday(m) {
   const tasksHtml = m.tasks === null
     ? `<div class="empty">No daily note yet today — tap + to start one</div>`
     : `${m.tasks.length === 0 ? `<div class="empty">Nothing on the list — tap + to add tasks</div>` : ""}
-       ${m.tasks.map((t) => `
-         <div class="task-row">
-           <button class="task ${t.done ? "done" : ""}" data-line="${t.line}" ${dis}>
-             <span class="box">${t.done ? "✓" : ""}</span>
-             <span class="txt">${esc(t.text)}</span>
-           </button>
-           <button class="task-del" data-del-line="${t.line}" title="Remove task" aria-label="Remove task" ${dis}>${icon("x", 15)}</button>
-         </div>`).join("")}`;
+       ${m.tasks.map((t) => state.taskEdit === t.line
+         ? `<div class="task-row task-edit">
+              <input type="text" class="task-edit-input" id="task-edit-input" value="${esc(t.text)}" autocomplete="off">
+              <button class="task-icon-btn save" data-edit-save="${t.line}" title="Save" aria-label="Save">${icon("check", 16)}</button>
+              <button class="task-icon-btn" id="btn-task-edit-cancel" title="Cancel" aria-label="Cancel">${icon("x", 16)}</button>
+            </div>`
+         : `<div class="task-row">
+              <button class="task ${t.done ? "done" : ""}" data-line="${t.line}" ${dis}>
+                <span class="box">${t.done ? "✓" : ""}</span>
+                <span class="txt">${esc(t.text)}</span>
+              </button>
+              <button class="task-icon-btn" data-edit-line="${t.line}" title="Edit task" aria-label="Edit task" ${dis}>${icon("pencil", 15)}</button>
+              <button class="task-icon-btn del" data-del-line="${t.line}" title="Remove task" aria-label="Remove task" ${dis}>${icon("x", 15)}</button>
+            </div>`).join("")}`;
 
   let scheduleHtml;
   if (!m.schedule) {
@@ -1789,7 +1810,8 @@ function renderArticles(m) {
         <h1>${esc(a.title)}</h1>
         <div class="art-meta">${esc(a.created)}${a.author ? ` · ${esc(a.author)}` : ""} · ${a.minutes} min read</div>
         ${mdToHtml(a.body.replace(/^#\s+.+\n/, ""))}
-      </article>`;
+      </article>
+      <button class="art-float-back" id="btn-art-float-back" aria-label="Back to articles">${icon("chevronLeft", 22)}</button>`;
     }
     state.article = null;
   }
@@ -1909,6 +1931,23 @@ function render() {
     document.querySelectorAll("[data-del-line]").forEach((b) => {
       b.onclick = () => removeTask(parseInt(b.dataset.delLine, 10));
     });
+    document.querySelectorAll("[data-edit-line]").forEach((b) => {
+      b.onclick = () => { state.taskEdit = parseInt(b.dataset.editLine, 10); render(); };
+    });
+    const editInput = $("#task-edit-input");
+    if (editInput) {
+      editInput.focus();
+      editInput.setSelectionRange(editInput.value.length, editInput.value.length);
+      editInput.onkeydown = (e) => {
+        if (e.key === "Enter") { e.preventDefault(); editTask(state.taskEdit, editInput.value); }
+        else if (e.key === "Escape") { state.taskEdit = null; render(); }
+      };
+    }
+    document.querySelectorAll("[data-edit-save]").forEach((b) => {
+      b.onclick = () => editTask(parseInt(b.dataset.editSave, 10), $("#task-edit-input").value);
+    });
+    const editCancel = $("#btn-task-edit-cancel");
+    if (editCancel) editCancel.onclick = () => { state.taskEdit = null; render(); };
   }
   if (v === "clients") {
     document.querySelectorAll("[data-ctab]").forEach((b) => {
@@ -2010,8 +2049,11 @@ function render() {
     document.querySelectorAll("[data-article]").forEach((b) => {
       b.onclick = () => { state.article = b.dataset.article; showBars(); render(); scrollTo(0, 0); };
     });
+    const goBack = () => { state.article = null; showBars(); render(); scrollTo(0, 0); };
     const back = $("#btn-art-back");
-    if (back) back.onclick = () => { state.article = null; showBars(); render(); scrollTo(0, 0); };
+    if (back) back.onclick = goBack;
+    const floatBack = $("#btn-art-float-back");
+    if (floatBack) floatBack.onclick = goBack;
     const search = $("#art-search");
     if (search) {
       search.oninput = () => {
@@ -2053,6 +2095,9 @@ addEventListener("scroll", () => {
   } else if (y < lastY - 8) {
     showBars();
   }
+  /* in an article, surface the floating back button once the inline one is out of view */
+  const fb = document.getElementById("btn-art-float-back");
+  if (fb) fb.classList.toggle("show", y > 220);
   lastY = y;
 }, { passive: true });
 
@@ -2088,6 +2133,7 @@ document.querySelectorAll(".tab").forEach((b) => {
     state.view = b.dataset.view;
     state.article = null;
     state.habitsEdit = false;
+    state.taskEdit = null;
     showBars();
     render();
     scrollTo(0, 0);

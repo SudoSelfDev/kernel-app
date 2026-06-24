@@ -146,14 +146,20 @@ body.bars-hidden #tabbar {
 
 .task-row { display: flex; align-items: center; gap: 2px; }
 .task-row .task { flex: 1; min-width: 0; }
-.task-del {
+.task-icon-btn {
   flex-shrink: 0; width: 32px; height: 32px;
   background: none; border: none; border-radius: 8px;
   color: var(--muted); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
 }
-.task-del:active { background: var(--danger-bg); color: var(--danger-fg); }
-.task-del[disabled] { opacity: 0.5; }
+.task-icon-btn:active { background: var(--surface2); }
+.task-icon-btn.del:active { background: var(--danger-bg); color: var(--danger-fg); }
+.task-icon-btn.save { color: var(--accent); }
+.task-icon-btn[disabled] { opacity: 0.5; }
+.task-edit-input {
+  flex: 1; min-width: 0; margin: 0;
+  font-size: 0.92rem; padding: 8px 10px;
+}
 
 .task {
   display: flex; align-items: flex-start; gap: 10px;
@@ -416,6 +422,22 @@ input::placeholder { color: var(--muted); }
   padding: 2px 0; cursor: pointer;
   display: flex; align-items: center; gap: 2px;
 }
+
+/* floating back button — fades in while reading so you needn't scroll to the top */
+.art-float-back {
+  position: fixed; z-index: 11;
+  left: max(16px, calc(50% - 252px));
+  bottom: calc(env(safe-area-inset-bottom) + 88px);
+  width: 46px; height: 46px; border-radius: 50%;
+  background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  opacity: 0; transform: translateY(12px); pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.art-float-back.show { opacity: 0.9; transform: translateY(0); pointer-events: auto; }
+.art-float-back:active { opacity: 1; background: var(--surface); }
 
 .article {
   background: var(--surface); border: 1px solid var(--border);
