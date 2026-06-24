@@ -3,6 +3,9 @@
    M1.6: task removal, schedule, articles reader, auto-hiding bars */
 "use strict";
 
+/* keep in sync with the CACHE version in sw.js on every release */
+const APP_VERSION = "v28";
+
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
 const BRANCH = "main";
@@ -1873,8 +1876,9 @@ function renderSettings() {
     <button class="btn danger" id="btn-logout">Forget token &amp; data</button>
   </div>
   <div class="card">
-    <h2>About</h2>
+    <h2>About <span class="h-extra">${APP_VERSION}</span></h2>
     <p class="muted" style="font-size:0.8rem;line-height:1.5">Kernel — dashboard over a private vault repo. Data is fetched straight from GitHub on this device and cached locally. Task edits are committed back to the vault as you. The Today schedule reads a file kept fresh by a GitHub Action in the vault repo. Nothing is sent anywhere else.</p>
+    <p class="muted" style="font-size:0.72rem;margin-top:8px">Build ${APP_VERSION} · if this looks behind after a deploy, fully close and reopen the app.</p>
   </div>`;
 }
 
