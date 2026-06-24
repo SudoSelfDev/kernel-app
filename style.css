@@ -293,6 +293,9 @@ input::placeholder { color: var(--muted); }
 
 .duo { display: flex; gap: 10px; }
 .duo-tile { flex: 1; min-width: 0; }
+button.duo-tile { font: inherit; color: inherit; text-align: left; cursor: pointer; -webkit-appearance: none; }
+button.duo-tile:active { background: var(--surface2); }
+.card h2 svg { flex-shrink: 0; }
 .duo-val { font-size: 1.2rem; font-weight: 750; }
 .duo-val.t-bad { color: var(--red); }
 .duo-val.t-warn { color: var(--amber); }

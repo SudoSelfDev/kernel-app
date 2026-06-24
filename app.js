@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v28";
+const APP_VERSION = "v29";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -16,6 +16,7 @@ const PATHS = {
   savings: atob("MTBfUHJvamVjdHMvU2F2aW5nc19QbGFuL1NhdmluZ3NfUGxhbi5tZA=="),
   debts: atob("MjBfTGlmZWxvZy9EZWJ0TG9nLm1k"),
   study: atob("MTBfUHJvamVjdHMvQ2xvdWRfRW5naW5lZXJpbmcvUGhhc2VfMS9waGFzZTEtcHJvZ3Jlc3MubWQ="),
+  studyplan: atob("MTBfUHJvamVjdHMvQ2xvdWRfRW5naW5lZXJpbmcvY2xvdWQtc3R1ZHktcGxhbi5tZA=="),
   dailyDir: atob("MjBfTGlmZWxvZy8yMV9EYWlseU5vdGVzLw=="),
   schedule: atob("MjBfTGlmZWxvZy9zY2hlZHVsZS5qc29u"),
   research: atob("MzBfTGlicmFyeS9SZXNlYXJjaA=="),
@@ -45,6 +46,7 @@ const state = {
   debtEdit: null,     // person name being edited, "__new__" for the add form, or null
   debtStatusPick: null, // pending status base in the debt form (Pending/Expected/Partial/Paid)
   taskEdit: null,     // absolute line index of the task being edited inline, or null
+  studyDoc: false,    // when true, the cloud study plan opens in the in-app reader
 };
 
 /* ---------- confetti ---------- */
@@ -108,6 +110,7 @@ const ICONS = {
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
   pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   chevronLeft: '<polyline points="15 18 9 12 15 6"/>',
+  chevronRight: '<polyline points="9 18 15 12 9 6"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   check: '<polyline points="20 6 9 17 4 12"/>',
   phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
@@ -268,11 +271,12 @@ async function syncAll() {
   setSyncStatus("Syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, study, daily, schedule, researchDir, masterplan, habits] = await Promise.all([
+    const [clients, savings, debts, study, studyplan, daily, schedule, researchDir, masterplan, habits] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
       fetchRaw(PATHS.study, { optional: true }),
+      fetchRaw(PATHS.studyplan, { optional: true }),
       fetchWithSha(todayNotePath(), { optional: true }),
       fetchRaw(PATHS.schedule, { optional: true }),
       fetchDir(PATHS.research, { optional: true }),
@@ -285,7 +289,7 @@ async function syncAll() {
       const texts = await Promise.all(mds.map((f) => fetchRaw(`${PATHS.research}/${f.name}`)));
       articles = mds.map((f, i) => ({ name: f.name, text: texts[i] }));
     }
-    state.files = { clients, savings, debts, study, daily, schedule, articles, masterplan, habits };
+    state.files = { clients, savings, debts, study, studyplan, daily, schedule, articles, masterplan, habits };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -1369,11 +1373,11 @@ function renderToday(m) {
 
   <div class="duo">
     ${m.study ? `
-    <div class="card duo-tile">
-      <h2>Cloud study</h2>
+    <button class="card duo-tile" id="btn-study-open" title="Open the study plan">
+      <h2>Cloud study ${icon("chevronRight", 13)}</h2>
       <div class="duo-val">${m.study.done}/${m.study.total}</div>
       <div class="duo-sub">${esc(m.study.title)} · ${m.study.total ? Math.round((m.study.done / m.study.total) * 100) : 0}%</div>
-    </div>` : ""}
+    </button>` : ""}
     <div class="card duo-tile">
       <h2>Next renewal</h2>
       <div class="duo-val t-${nextTone}">${next ? (next.days < 0 ? `${-next.days}d ago` : `${next.days}d`) : "—"}</div>
@@ -1845,6 +1849,21 @@ function renderArticles(m) {
   return search + list;
 }
 
+/* in-app reader for the cloud study plan — reuses the article styling + floating back */
+function renderStudyDoc() {
+  const md = state.files.studyplan;
+  if (!md) {
+    return `<button class="back-btn" id="btn-study-back">${icon("chevronLeft", 17)} Back</button>
+      <div class="empty">Study plan not synced yet — pull to refresh.</div>`;
+  }
+  return `
+    <button class="back-btn" id="btn-study-back">${icon("chevronLeft", 17)} Back</button>
+    <article class="article">
+      ${mdToHtml(stripFrontmatter(md))}
+    </article>
+    <button class="art-float-back" id="btn-study-float-back" aria-label="Back">${icon("chevronLeft", 22)}</button>`;
+}
+
 function renderSettings() {
   const pref = getThemePref();
   return `
@@ -1912,7 +1931,8 @@ function render() {
   const m = buildModel();
   const v = state.view;
   let html = state.error ? `<div class="error-banner">${esc(state.error)}</div>` : "";
-  if (!state.files.clients && !state.error) html += `<div class="empty">Loading vault…</div>`;
+  if (state.studyDoc) html += renderStudyDoc();
+  else if (!state.files.clients && !state.error) html += `<div class="empty">Loading vault…</div>`;
   else html += v === "today" ? renderToday(m)
     : v === "clients" ? renderClients(m)
     : v === "money" ? renderMoney(m)
@@ -1921,14 +1941,20 @@ function render() {
     : renderSettings();
   $("#view").innerHTML = html;
 
+  if (state.studyDoc) {
+    const close = () => { state.studyDoc = false; showBars(); render(); scrollTo(0, 0); };
+    const sb = $("#btn-study-back"); if (sb) sb.onclick = close;
+    const sfb = $("#btn-study-float-back"); if (sfb) sfb.onclick = close;
+  }
+
   /* settings has no tab — opening it via the gear clears the bar */
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === v));
 
-  /* the floating add button adds tasks on Today, habits on Habits */
-  $("#fab").classList.toggle("hidden", v !== "today" && v !== "habits");
+  /* the floating add button adds tasks on Today, habits on Habits (never over the reader) */
+  $("#fab").classList.toggle("hidden", state.studyDoc || (v !== "today" && v !== "habits"));
   $("#fab").disabled = state.busy;
 
-  if (v === "today") {
+  if (v === "today" && !state.studyDoc) {
     document.querySelectorAll(".task[data-line]").forEach((b) => {
       b.onclick = () => toggleTask(parseInt(b.dataset.line, 10));
     });
@@ -1938,6 +1964,8 @@ function render() {
     document.querySelectorAll("[data-edit-line]").forEach((b) => {
       b.onclick = () => { state.taskEdit = parseInt(b.dataset.editLine, 10); render(); };
     });
+    const studyOpen = $("#btn-study-open");
+    if (studyOpen) studyOpen.onclick = () => { state.studyDoc = true; showBars(); render(); scrollTo(0, 0); };
     const editInput = $("#task-edit-input");
     if (editInput) {
       editInput.focus();
@@ -2099,9 +2127,8 @@ addEventListener("scroll", () => {
   } else if (y < lastY - 8) {
     showBars();
   }
-  /* in an article, surface the floating back button once the inline one is out of view */
-  const fb = document.getElementById("btn-art-float-back");
-  if (fb) fb.classList.toggle("show", y > 220);
+  /* in an article or the study reader, surface the floating back button once scrolled */
+  document.querySelectorAll(".art-float-back").forEach((fb) => fb.classList.toggle("show", y > 220));
   lastY = y;
 }, { passive: true });
 
@@ -2138,6 +2165,7 @@ document.querySelectorAll(".tab").forEach((b) => {
     state.article = null;
     state.habitsEdit = false;
     state.taskEdit = null;
+    state.studyDoc = false;
     showBars();
     render();
     scrollTo(0, 0);
@@ -2147,6 +2175,7 @@ $("#btn-settings").innerHTML = icon("gear", 17);
 $("#btn-settings").onclick = () => {
   state.view = "settings";
   state.article = null;
+  state.studyDoc = false;
   showBars();
   render();
   scrollTo(0, 0);
