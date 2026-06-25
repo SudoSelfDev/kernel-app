@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v29";
+const APP_VERSION = "v30";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -47,6 +47,7 @@ const state = {
   debtStatusPick: null, // pending status base in the debt form (Pending/Expected/Partial/Paid)
   taskEdit: null,     // absolute line index of the task being edited inline, or null
   studyDoc: false,    // when true, the cloud study plan opens in the in-app reader
+  articleReturn: null, // view to return to when leaving an article (e.g. opened from a task)
 };
 
 /* ---------- confetti ---------- */
@@ -1291,6 +1292,42 @@ function cdField(label, value, mono) {
   </button>`;
 }
 
+/* match a [[wikilink]] target to a research article: by filename slug or title */
+function resolveArticle(target, articles) {
+  const t = target.trim().toLowerCase().replace(/\.md$/, "");
+  const slug = (a) => a.name.replace(/\.md$/, "").toLowerCase();
+  return articles.find((a) => slug(a) === t)
+      || articles.find((a) => (a.title || "").toLowerCase() === t)
+      || articles.find((a) => slug(a) === t.replace(/\s+/g, "-"));
+}
+
+/* render task text, turning [[wikilinks]] into tappable article links (or muted text) */
+function linkifyTaskText(text, articles) {
+  const re = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+  let out = "", last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    out += esc(text.slice(last, m.index));
+    const label = (m[2] || m[1]).trim();
+    const art = resolveArticle(m[1], articles);
+    out += art
+      ? `<span class="task-link" data-article-link="${esc(art.name)}">${esc(label)} ${icon("book", 12)}</span>`
+      : `<span class="wikilink">${esc(label)}</span>`;
+    last = re.lastIndex;
+  }
+  out += esc(text.slice(last));
+  return out;
+}
+
+/* open a research article in the reader, remembering where to return on Back */
+function openArticle(name, from) {
+  state.view = "articles";
+  state.article = name;
+  state.articleReturn = from || null;
+  showBars();
+  render();
+  scrollTo(0, 0);
+}
+
 function renderToday(m) {
   const s = m.savings;
   const pct = s.current && s.target ? Math.min(100, (s.current / s.target) * 100) : 0;
@@ -1322,7 +1359,7 @@ function renderToday(m) {
          : `<div class="task-row">
               <button class="task ${t.done ? "done" : ""}" data-line="${t.line}" ${dis}>
                 <span class="box">${t.done ? "✓" : ""}</span>
-                <span class="txt">${esc(t.text)}</span>
+                <span class="txt">${linkifyTaskText(t.text, m.articles)}</span>
               </button>
               <button class="task-icon-btn" data-edit-line="${t.line}" title="Edit task" aria-label="Edit task" ${dis}>${icon("pencil", 15)}</button>
               <button class="task-icon-btn del" data-del-line="${t.line}" title="Remove task" aria-label="Remove task" ${dis}>${icon("x", 15)}</button>
@@ -1956,7 +1993,11 @@ function render() {
 
   if (v === "today" && !state.studyDoc) {
     document.querySelectorAll(".task[data-line]").forEach((b) => {
-      b.onclick = () => toggleTask(parseInt(b.dataset.line, 10));
+      b.onclick = (e) => {
+        const link = e.target.closest("[data-article-link]");
+        if (link) { openArticle(link.dataset.articleLink, "today"); return; }
+        toggleTask(parseInt(b.dataset.line, 10));
+      };
     });
     document.querySelectorAll("[data-del-line]").forEach((b) => {
       b.onclick = () => removeTask(parseInt(b.dataset.delLine, 10));
@@ -2079,9 +2120,13 @@ function render() {
   }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
-      b.onclick = () => { state.article = b.dataset.article; showBars(); render(); scrollTo(0, 0); };
+      b.onclick = () => { state.article = b.dataset.article; state.articleReturn = null; showBars(); render(); scrollTo(0, 0); };
     });
-    const goBack = () => { state.article = null; showBars(); render(); scrollTo(0, 0); };
+    const goBack = () => {
+      state.article = null;
+      if (state.articleReturn) { state.view = state.articleReturn; state.articleReturn = null; }
+      showBars(); render(); scrollTo(0, 0);
+    };
     const back = $("#btn-art-back");
     if (back) back.onclick = goBack;
     const floatBack = $("#btn-art-float-back");
@@ -2137,11 +2182,37 @@ addEventListener("scroll", () => {
 function openComposer() {
   if (state.busy) return;
   $("#composer").classList.remove("hidden");
+  buildComposerArticles();
   $("#composer-text").focus();
 }
 function closeComposer() {
   $("#composer").classList.add("hidden");
   $("#composer-text").value = "";
+  const box = $("#composer-articles");
+  if (box) box.classList.add("hidden");
+}
+
+/* fill the composer's article picker — tapping a chip inserts a [[wikilink]] */
+function buildComposerArticles() {
+  const box = $("#composer-articles");
+  if (!box) return;
+  box.classList.add("hidden");
+  const arts = buildModel().articles || [];
+  box.innerHTML = arts.length
+    ? arts.map((a) => `<button type="button" class="art-chip" data-insert="[[${esc(a.name.replace(/\.md$/, ""))}|${esc(a.title)}]]">${esc(a.title)}</button>`).join("")
+    : `<div class="muted" style="font-size:0.8rem;padding:4px 0">No research articles synced yet.</div>`;
+}
+
+/* insert text at the textarea's cursor, with a separating space if needed */
+function insertAtCursor(ta, text) {
+  const start = ta.selectionStart ?? ta.value.length;
+  const end = ta.selectionEnd ?? ta.value.length;
+  const before = ta.value.slice(0, start);
+  const sep = before && !/[\s\n]$/.test(before) ? " " : "";
+  ta.value = before + sep + text + ta.value.slice(end);
+  const pos = (before + sep + text).length;
+  ta.focus();
+  ta.setSelectionRange(pos, pos);
 }
 
 /* ---------- habit modal ---------- */
@@ -2163,6 +2234,7 @@ document.querySelectorAll(".tab").forEach((b) => {
   b.onclick = () => {
     state.view = b.dataset.view;
     state.article = null;
+    state.articleReturn = null;
     state.habitsEdit = false;
     state.taskEdit = null;
     state.studyDoc = false;
@@ -2188,6 +2260,11 @@ $("#fab").innerHTML = icon("plus", 24);
 $("#fab").onclick = () => (state.view === "habits" ? openHabitModal() : openComposer());
 $("#composer-cancel").onclick = closeComposer;
 $("#composer").onclick = (e) => { if (e.target.id === "composer") closeComposer(); };
+$("#composer-link-toggle").onclick = () => $("#composer-articles").classList.toggle("hidden");
+$("#composer-articles").onclick = (e) => {
+  const chip = e.target.closest("[data-insert]");
+  if (chip) insertAtCursor($("#composer-text"), chip.dataset.insert);
+};
 $("#composer-add").onclick = () => {
   const texts = $("#composer-text").value.split("\n");
   closeComposer();

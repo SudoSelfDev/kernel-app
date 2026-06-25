@@ -36,7 +36,9 @@
     <div class="sheet">
       <h3>Add tasks</h3>
       <p class="muted">One task per line — all saved in a single sync.</p>
-      <textarea id="composer-text" rows="5" placeholder="Buy credits&#10;Call Hamza about renewal&#10;…"></textarea>
+      <textarea id="composer-text" rows="5" placeholder="Buy credits&#10;Call Hamza about renewal&#10;Read [[sleep-science]]&#10;…"></textarea>
+      <button type="button" class="link-toggle" id="composer-link-toggle">🔗 Link a research article</button>
+      <div id="composer-articles" class="composer-articles hidden"></div>
       <div class="sheet-actions">
         <button class="btn secondary" id="composer-cancel">Cancel</button>
         <button class="btn" id="composer-add">Add</button>

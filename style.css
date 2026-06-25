@@ -176,6 +176,27 @@ body.bars-hidden #tabbar {
 .task.done .box { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 .task .txt { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .task.done .txt { color: var(--muted); text-decoration: line-through; }
+/* tappable research-article link inside a task */
+.task-link { color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.task-link svg { vertical-align: -1px; }
+.task.done .task-link { opacity: 0.7; }
+
+/* composer: research-article picker */
+.link-toggle {
+  display: block; width: 100%; text-align: left; margin-top: 10px;
+  background: none; border: none; color: var(--accent);
+  font-size: 0.85rem; font-weight: 600; cursor: pointer; font-family: inherit; padding: 4px 0;
+}
+.composer-articles {
+  display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px;
+  max-height: 150px; overflow-y: auto;
+}
+.art-chip {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 999px;
+  color: var(--text); font-size: 0.78rem; padding: 5px 11px; cursor: pointer;
+  font-family: inherit; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.art-chip:active { background: var(--surface); }
 .task[disabled] { opacity: 0.5; }
 
 /* floating add button — sits above the tab bar, hides with it */
