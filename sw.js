@@ -2,11 +2,23 @@
    Network-first means a deploy shows up on the next open — no stale-mix of old CSS
    with new HTML. Vault data is never cached here (it lives in localStorage,
    fetched live from the GitHub API). */
-const CACHE = "kernel-shell-v31";
+const CACHE = "kernel-shell-v32";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // fetch shell files bypassing the HTTP cache so a new version never precaches stale assets
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => Promise.all(SHELL.map((u) =>
+        fetch(u, { cache: "reload" }).then((r) => r.ok && c.put(u, r)).catch(() => {})
+      )))
+      .then(() => self.skipWaiting())
+  );
+});
+
+// let the page tell a waiting worker to activate immediately
+self.addEventListener("message", (e) => {
+  if (e.data === "skip-waiting") self.skipWaiting();
 });
 
 self.addEventListener("activate", (e) => {

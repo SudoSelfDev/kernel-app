@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v31";
+const APP_VERSION = "v32";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -2433,7 +2433,28 @@ $("#habit-name").onkeydown = (e) => {
   if (e.key === "Escape") closeHabitModal();
 };
 
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+/* Service worker with auto-update: when a new version activates it takes control
+   and we reload once so the freshest code shows without a manual hard-refresh. */
+if ("serviceWorker" in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshing || !hadController) return; // skip the first-install claim
+    refreshing = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register("sw.js").then((reg) => {
+    reg.update();                                   // check for a new version on every open
+    setInterval(() => reg.update(), 60 * 1000);     // and every minute while the app is open
+    reg.addEventListener("updatefound", () => {
+      const sw = reg.installing;
+      if (sw) sw.addEventListener("statechange", () => {
+        // a new worker has installed alongside an existing one → activate it now
+        if (sw.state === "installed" && navigator.serviceWorker.controller) sw.postMessage("skip-waiting");
+      });
+    });
+  });
+}
 
 applyTheme();
 loadCache();
