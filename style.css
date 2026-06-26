@@ -197,6 +197,13 @@ body.bars-hidden #tabbar {
   font-family: inherit; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .art-chip:active { background: var(--surface); }
+
+/* office transport card */
+.card.transport { border-left: 3px solid var(--border); }
+.card.transport.tr-due { border-left-color: var(--amber); }
+.card.transport.tr-late { border-left-color: var(--red); }
+.card.transport.tr-ok { border-left-color: var(--accent); }
+.card.transport .btn { margin-top: 4px; }
 .task[disabled] { opacity: 0.5; }
 
 /* floating add button — sits above the tab bar, hides with it */

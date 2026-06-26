@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v30";
+const APP_VERSION = "v31";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -17,6 +17,7 @@ const PATHS = {
   debts: atob("MjBfTGlmZWxvZy9EZWJ0TG9nLm1k"),
   study: atob("MTBfUHJvamVjdHMvQ2xvdWRfRW5naW5lZXJpbmcvUGhhc2VfMS9waGFzZTEtcHJvZ3Jlc3MubWQ="),
   studyplan: atob("MTBfUHJvamVjdHMvQ2xvdWRfRW5naW5lZXJpbmcvY2xvdWQtc3R1ZHktcGxhbi5tZA=="),
+  transport: atob("MjBfTGlmZWxvZy90cmFuc3BvcnQtbG9nLm1k"),
   dailyDir: atob("MjBfTGlmZWxvZy8yMV9EYWlseU5vdGVzLw=="),
   schedule: atob("MjBfTGlmZWxvZy9zY2hlZHVsZS5qc29u"),
   research: atob("MzBfTGlicmFyeS9SZXNlYXJjaA=="),
@@ -272,7 +273,7 @@ async function syncAll() {
   setSyncStatus("Syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, study, studyplan, daily, schedule, researchDir, masterplan, habits] = await Promise.all([
+    const [clients, savings, debts, study, studyplan, daily, schedule, researchDir, masterplan, habits, transport] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
@@ -283,6 +284,7 @@ async function syncAll() {
       fetchDir(PATHS.research, { optional: true }),
       fetchRaw(PATHS.masterplan, { optional: true }),
       fetchWithSha(PATHS.habits, { optional: true }),
+      fetchRaw(PATHS.transport, { optional: true }),
     ]);
     let articles = [];
     if (Array.isArray(researchDir)) {
@@ -290,7 +292,7 @@ async function syncAll() {
       const texts = await Promise.all(mds.map((f) => fetchRaw(`${PATHS.research}/${f.name}`)));
       articles = mds.map((f, i) => ({ name: f.name, text: texts[i] }));
     }
-    state.files = { clients, savings, debts, study, studyplan, daily, schedule, articles, masterplan, habits };
+    state.files = { clients, savings, debts, study, studyplan, daily, schedule, articles, masterplan, habits, transport };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -1021,7 +1023,7 @@ function buildModel() {
   const f = state.files;
   const m = {
     active: [], leads: [], churned: [], savings: {}, debts: [], debtTotal: null,
-    study: null, tasks: null, schedule: null, articles: [], review: null,
+    study: null, tasks: null, schedule: null, articles: [], review: null, transport: null,
   };
 
   if (f.clients) {
@@ -1114,6 +1116,22 @@ function buildModel() {
     const boxes = f.study.match(/^- \[[ xX]\]/gm) || [];
     const done = f.study.match(/^- \[[xX]\]/gm) || [];
     m.study = { title: title.replace(/:.*$/, ""), total: boxes.length, done: done.length };
+  }
+
+  if (f.transport) {
+    const t = f.transport;
+    const days = (t.match(/^\*\*Work days:\*\*\s*(.+)$/m) || [])[1] || "Mon, Tue, Wed, Thu, Fri";
+    const cutoff = ((t.match(/^\*\*Cutoff:\*\*\s*(.+)$/m) || [])[1] || "13:00").trim();
+    const site = ((t.match(/^\*\*Booking site:\*\*\s*(.+)$/m) || [])[1] || "https://www.movehkm.com").trim();
+    const log = {};
+    parseTable(section(t, "## Log")).forEach((r) => {
+      const vals = Object.values(r);
+      if (vals[0]) log[vals[0].trim()] = (vals[1] || "").trim();
+    });
+    m.transport = {
+      workDays: days.split(",").map((d) => d.trim().slice(0, 3).toLowerCase()),
+      cutoff, site, log,
+    };
   }
 
   if (f.daily && typeof f.daily.text === "string") {
@@ -1328,6 +1346,94 @@ function openArticle(name, from) {
   scrollTo(0, 0);
 }
 
+/* ---------- office transport (book-tomorrow tracker) ---------- */
+
+const WD_SHORT = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/* work out what the transport card should show right now */
+function transportState(m) {
+  if (!m.transport) return null;
+  const t = m.transport;
+  const now = new Date();
+  const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+  const date = isoOf(tomorrow);
+  const isWorkEve = t.workDays.includes(WD_SHORT[tomorrow.getDay()]);
+  const logged = t.log[date] || "";
+  const niceDate = tomorrow.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+
+  if (/paid|booked|✅/i.test(logged)) return { state: "booked", date, niceDate, site: t.site };
+  if (/off|🚫/i.test(logged))         return { state: "off", date, niceDate, site: t.site };
+  if (!isWorkEve) return { state: "hidden" };
+
+  // not yet actioned — is the 13:00 cutoff still ahead today?
+  const [ch, cm] = (t.cutoff || "13:00").split(":").map((n) => parseInt(n, 10));
+  const cutoffMins = (ch || 13) * 60 + (cm || 0);
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  return { state: nowMins < cutoffMins ? "needs" : "missed", date, niceDate, site: t.site, cutoff: t.cutoff || "13:00" };
+}
+
+let _transportTimer = null;
+const transportText = () => state.files.transport || "";
+
+function applyTransportChange(newText) {
+  state.files.transport = newText;
+  render();
+  if (_transportTimer) clearTimeout(_transportTimer);
+  _transportTimer = setTimeout(flushTransport, SAVE_DELAY);
+}
+
+async function flushTransport() {
+  _transportTimer = null;
+  const text = transportText();
+  if (!text) return;
+  state.busy = true;
+  render();
+  try {
+    const serverText = await fetchRaw(PATHS.transport);
+    const baseSha = await gitBlobSha(serverText);
+    await putFile(PATHS.transport, text, "kernel-app: update transport log", baseSha);
+    state.lastSync = Date.now();
+    saveCache();
+    state.error = null;
+  } catch (e) {
+    if (e.message === "auth-write") state.error = "Write rejected — your token needs Contents: Read and write.";
+    else if (e.message === "conflict") { state.error = "Transport log changed on GitHub — refreshing."; state.busy = false; await syncAll(); return; }
+    else state.error = "Couldn't save — check your connection and try again.";
+  }
+  state.busy = false;
+  render();
+}
+
+/* upsert (or clear, when status is null) a date row in the ## Log table */
+function setTransport(date, status) {
+  const lines = transportText().split("\n");
+  // find the Log table region
+  const h = lines.findIndex((l) => /^##\s+log/i.test(l.trim()));
+  if (h === -1) return;
+  let start = -1, end = -1;
+  for (let i = h + 1; i < lines.length; i++) {
+    const tr = lines[i].trim();
+    if (tr.startsWith("|")) { if (start === -1) start = i; end = i; }
+    else if (start !== -1) break;
+    else if (/^#+\s/.test(tr)) break;
+  }
+  if (start === -1) return;
+  // existing row for this date?
+  let rowIdx = -1;
+  for (let i = start + 2; i <= end; i++) {
+    if ((lines[i].split("|")[1] || "").trim() === date) { rowIdx = i; break; }
+  }
+  if (status === null) {
+    if (rowIdx !== -1) lines.splice(rowIdx, 1);
+  } else {
+    const rowStr = `| ${date} | ${status} |`;
+    if (rowIdx !== -1) lines[rowIdx] = rowStr;
+    else lines.splice(end + 1, 0, rowStr);
+  }
+  applyTransportChange(lines.join("\n"));
+}
+
 function renderToday(m) {
   const s = m.savings;
   const pct = s.current && s.target ? Math.min(100, (s.current / s.target) * 100) : 0;
@@ -1387,6 +1493,41 @@ function renderToday(m) {
 
   const nextTone = !next ? "dim" : next.days <= 7 ? "bad" : next.days <= 30 ? "warn" : "ok";
 
+  /* ---- office transport (book tomorrow's ride) ---- */
+  const tr = transportState(m);
+  let transportCard = "";
+  const trDis = state.busy ? "disabled" : "";
+  if (tr && tr.state !== "hidden") {
+    if (tr.state === "needs" || tr.state === "missed") {
+      const warn = tr.state === "missed";
+      transportCard = `
+      <div class="card transport ${warn ? "tr-late" : "tr-due"}">
+        <h2>🚌 Office transport ${warn ? `<span class="chip bad">cutoff passed</span>` : `<span class="chip warn">by ${esc(tr.cutoff)}</span>`}</h2>
+        <p class="muted review-note">${warn
+          ? `The ${esc(tr.cutoff)} window to book <b>${esc(tr.niceDate)}</b> has passed. If you still managed it, mark it booked.`
+          : `Book your ride for <b>${esc(tr.niceDate)}</b> before <b>${esc(tr.cutoff)}</b>.`}</p>
+        <a class="btn" id="btn-tr-open" href="${esc(tr.site)}" target="_blank" rel="noopener">Open booking site ↗</a>
+        <div style="height:8px"></div>
+        <button class="btn secondary" id="btn-tr-booked" ${trDis}>Mark booked ✓</button>
+        <button class="show-toggle" id="btn-tr-off">It's a day off — no ride</button>
+      </div>`;
+    } else if (tr.state === "booked") {
+      transportCard = `
+      <div class="card transport tr-ok">
+        <h2>🚌 Office transport <span class="chip ok">booked ✓</span></h2>
+        <p class="muted review-note">Ride booked for <b>${esc(tr.niceDate)}</b>.</p>
+        <button class="show-toggle" id="btn-tr-undo" ${trDis}>Undo</button>
+      </div>`;
+    } else if (tr.state === "off") {
+      transportCard = `
+      <div class="card transport">
+        <h2>🚌 Office transport <span class="chip dim">day off</span></h2>
+        <p class="muted review-note">No ride needed for <b>${esc(tr.niceDate)}</b>.</p>
+        <button class="show-toggle" id="btn-tr-undo" ${trDis}>Undo</button>
+      </div>`;
+    }
+  }
+
   return `
   <div class="hero">
     <div class="hero-date">${esc(dateStr)}</div>
@@ -1397,6 +1538,8 @@ function renderToday(m) {
     <div class="coach-text">${esc(coachMsg)}</div>
     <div class="coach-val">${pct.toFixed(0)}%<small>of ${s.target ? Math.round(s.target / 1000) : 50}K goal</small></div>
   </div>
+
+  ${transportCard}
 
   <div class="card">
     <h2>Tasks</h2>
@@ -2007,6 +2150,14 @@ function render() {
     });
     const studyOpen = $("#btn-study-open");
     if (studyOpen) studyOpen.onclick = () => { state.studyDoc = true; showBars(); render(); scrollTo(0, 0); };
+
+    const trs = transportState(m);
+    const trBooked = $("#btn-tr-booked");
+    if (trBooked) trBooked.onclick = () => setTransport(trs.date, "✅ Booked");
+    const trOff = $("#btn-tr-off");
+    if (trOff) trOff.onclick = () => setTransport(trs.date, "🚫 Off");
+    const trUndo = $("#btn-tr-undo");
+    if (trUndo) trUndo.onclick = () => setTransport(trs.date, null);
     const editInput = $("#task-edit-input");
     if (editInput) {
       editInput.focus();
