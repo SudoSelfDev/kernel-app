@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v32";
+const APP_VERSION = "v33";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -1435,8 +1435,6 @@ function setTransport(date, status) {
 }
 
 function renderToday(m) {
-  const s = m.savings;
-  const pct = s.current && s.target ? Math.min(100, (s.current / s.target) * 100) : 0;
   const renewals = [...m.active].filter((c) => c.days !== null).sort((a, b) => a.days - b.days);
   const next = renewals[0];
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
@@ -1445,13 +1443,6 @@ function renderToday(m) {
   const open = m.tasks ? m.tasks.filter((t) => !t.done).length : 0;
   const heroSub = m.tasks === null ? "No daily note yet"
     : open === 0 ? "All tasks done" : `${open} task${open === 1 ? "" : "s"} remaining`;
-
-  /* coach card — the accountability line up top */
-  const monthly = s.monthly || 5500;
-  const remaining = Math.max(0, monthly - (s.monthSaved || 0));
-  const coachMsg = remaining === 0
-    ? `Monthly target hit — ${monthly.toLocaleString()} MAD saved. Keep going.`
-    : `Save ${remaining.toLocaleString()} MAD${s.monthSaved ? " more" : ""} this month to stay on track`;
 
   const tasksHtml = m.tasks === null
     ? `<div class="empty">No daily note yet today — tap + to start one</div>`
@@ -1532,11 +1523,6 @@ function renderToday(m) {
   <div class="hero">
     <div class="hero-date">${esc(dateStr)}</div>
     <div class="hero-sub">${esc(heroSub)}${state.busy ? " · saving…" : ""}</div>
-  </div>
-
-  <div class="coach">
-    <div class="coach-text">${esc(coachMsg)}</div>
-    <div class="coach-val">${pct.toFixed(0)}%<small>of ${s.target ? Math.round(s.target / 1000) : 50}K goal</small></div>
   </div>
 
   ${transportCard}
