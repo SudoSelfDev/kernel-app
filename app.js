@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v33";
+const APP_VERSION = "v34";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -49,6 +49,7 @@ const state = {
   taskEdit: null,     // absolute line index of the task being edited inline, or null
   studyDoc: false,    // when true, the cloud study plan opens in the in-app reader
   articleReturn: null, // view to return to when leaving an article (e.g. opened from a task)
+  transportWeek: false, // week strip on the transport card expanded
 };
 
 /* ---------- confetti ---------- */
@@ -1120,18 +1121,15 @@ function buildModel() {
 
   if (f.transport) {
     const t = f.transport;
-    const days = (t.match(/^\*\*Work days:\*\*\s*(.+)$/m) || [])[1] || "Mon, Tue, Wed, Thu, Fri";
     const cutoff = ((t.match(/^\*\*Cutoff:\*\*\s*(.+)$/m) || [])[1] || "13:00").trim();
     const site = ((t.match(/^\*\*Booking site:\*\*\s*(.+)$/m) || [])[1] || "https://www.movehkm.com").trim();
+    const calLabel = ((t.match(/^\*\*Work calendar:\*\*\s*(.+)$/m) || [])[1] || "Work").trim();
     const log = {};
     parseTable(section(t, "## Log")).forEach((r) => {
       const vals = Object.values(r);
       if (vals[0]) log[vals[0].trim()] = (vals[1] || "").trim();
     });
-    m.transport = {
-      workDays: days.split(",").map((d) => d.trim().slice(0, 3).toLowerCase()),
-      cutoff, site, log,
-    };
+    m.transport = { cutoff, site, calLabel, log };
   }
 
   if (f.daily && typeof f.daily.text === "string") {
@@ -1163,8 +1161,27 @@ function buildModel() {
           .filter((e) => e.date === iso)
           .sort((a, b) => `${a.allDay ? 0 : 1}${a.start || ""}`.localeCompare(`${b.allDay ? 0 : 1}${b.start || ""}`)),
       };
+
+      /* work shifts by date — a day can hold several blocks (split shift with a
+         break), so the window is the earliest start to the latest end */
+      const want = (m.transport?.calLabel || "Work").toLowerCase();
+      const shifts = {};
+      (sch.events || []).forEach((e) => {
+        if ((e.cal || "").trim().toLowerCase() !== want || !e.date) return;
+        const cur = shifts[e.date] || { start: null, end: null };
+        if (!e.allDay) {
+          if (e.start && (!cur.start || e.start < cur.start)) cur.start = e.start;
+          if (e.end && (!cur.end || e.end > cur.end)) cur.end = e.end;
+        }
+        shifts[e.date] = cur;
+      });
+      m.workShifts = {};
+      Object.entries(shifts).forEach(([d, v]) => {
+        m.workShifts[d] = v.start && v.end ? `${v.start}–${v.end}` : "";
+      });
     } catch { /* malformed schedule.json — treat as absent */ }
   }
+  if (!m.workShifts) m.workShifts = {};
 
   m.habits = null;
   if (f.habits && typeof f.habits.text === "string") {
@@ -1348,29 +1365,72 @@ function openArticle(name, from) {
 
 /* ---------- office transport (book-tomorrow tracker) ---------- */
 
-const WD_SHORT = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-/* work out what the transport card should show right now */
-function transportState(m) {
+/* Which day must a ride for `d` be booked on? Sat/Sun/Mon all go on the
+   preceding Friday (after that the option disappears); everything else D-1. */
+function bookingDayFor(d) {
+  const wd = d.getDay();                                  // Sun=0 … Sat=6
+  const delta = wd === 6 ? 1 : wd === 0 ? 2 : wd === 1 ? 3 : 1;
+  const b = new Date(d); b.setDate(b.getDate() - delta);
+  return b;
+}
+
+const statusOf = (logged) =>
+  /booked|✅/i.test(logged) ? "booked" : /off|🚫/i.test(logged) ? "off" : "pending";
+
+/* Everything the transport card needs: the days bookable today, and a week
+   strip for context/fixing up. Work days come from the Work calendar. */
+function transportPlan(m) {
   if (!m.transport) return null;
   const t = m.transport;
   const now = new Date();
-  const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
-  const date = isoOf(tomorrow);
-  const isWorkEve = t.workDays.includes(WD_SHORT[tomorrow.getDay()]);
-  const logged = t.log[date] || "";
-  const niceDate = tomorrow.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const shifts = m.workShifts || {};
+  const hasWorkData = Object.keys(shifts).length > 0;
 
-  if (/paid|booked|✅/i.test(logged)) return { state: "booked", date, niceDate, site: t.site };
-  if (/off|🚫/i.test(logged))         return { state: "off", date, niceDate, site: t.site };
-  if (!isWorkEve) return { state: "hidden" };
-
-  // not yet actioned — is the 13:00 cutoff still ahead today?
   const [ch, cm] = (t.cutoff || "13:00").split(":").map((n) => parseInt(n, 10));
-  const cutoffMins = (ch || 13) * 60 + (cm || 0);
-  const nowMins = now.getHours() * 60 + now.getMinutes();
-  return { state: nowMins < cutoffMins ? "needs" : "missed", date, niceDate, site: t.site, cutoff: t.cutoff || "13:00" };
+  const pastCutoff = now.getHours() * 60 + now.getMinutes() >= (ch || 13) * 60 + (cm || 0);
+
+  const dayInfo = (d) => {
+    const date = isoOf(d);
+    const shift = shifts[date];
+    return {
+      date, shift: shift || "",
+      isWork: shift !== undefined,
+      status: statusOf(t.log[date] || ""),
+      dow: d.toLocaleDateString("en-US", { weekday: "short" }),
+      nice: d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }),
+      short: d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }),
+    };
+  };
+
+  /* bookable today = every upcoming day whose booking day is today */
+  const targets = [];
+  for (let i = 1; i <= 4; i++) {
+    const d = new Date(today); d.setDate(d.getDate() + i);
+    if (isoOf(bookingDayFor(d)) !== isoOf(today)) continue;
+    const info = dayInfo(d);
+    /* with no calendar data we can't tell work days from days off — show it
+       anyway rather than hiding a booking that might be needed */
+    if (info.isWork || !hasWorkData) targets.push(info);
+  }
+
+  const week = [];
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(today); d.setDate(d.getDate() + i);
+    const info = dayInfo(d);
+    info.bookOn = bookingDayFor(d);
+    info.bookToday = isoOf(info.bookOn) === isoOf(today);
+    info.windowGone = info.bookOn < today || (info.bookToday && pastCutoff);
+    week.push(info);
+  }
+
+  return {
+    targets, week, hasWorkData, pastCutoff,
+    site: t.site, cutoff: t.cutoff || "13:00",
+    pending: targets.filter((x) => x.status === "pending"),
+  };
 }
 
 let _transportTimer = null;
@@ -1405,8 +1465,11 @@ async function flushTransport() {
   render();
 }
 
-/* upsert (or clear, when status is null) a date row in the ## Log table */
-function setTransport(date, status) {
+/* upsert (or clear, when status is null) one or more date rows in the ## Log
+   table — several dates in one pass so a whole Friday batch is a single commit */
+function setTransport(dates, status) {
+  const list = Array.isArray(dates) ? dates : [dates];
+  if (!list.length) return;
   const lines = transportText().split("\n");
   // find the Log table region
   const h = lines.findIndex((l) => /^##\s+log/i.test(l.trim()));
@@ -1419,18 +1482,20 @@ function setTransport(date, status) {
     else if (/^#+\s/.test(tr)) break;
   }
   if (start === -1) return;
-  // existing row for this date?
-  let rowIdx = -1;
-  for (let i = start + 2; i <= end; i++) {
-    if ((lines[i].split("|")[1] || "").trim() === date) { rowIdx = i; break; }
-  }
-  if (status === null) {
-    if (rowIdx !== -1) lines.splice(rowIdx, 1);
-  } else {
-    const rowStr = `| ${date} | ${status} |`;
-    if (rowIdx !== -1) lines[rowIdx] = rowStr;
-    else lines.splice(end + 1, 0, rowStr);
-  }
+
+  list.forEach((date) => {
+    let rowIdx = -1;
+    for (let i = start + 2; i <= end; i++) {
+      if ((lines[i].split("|")[1] || "").trim() === date) { rowIdx = i; break; }
+    }
+    if (status === null) {
+      if (rowIdx !== -1) { lines.splice(rowIdx, 1); end--; }
+    } else {
+      const rowStr = `| ${date} | ${status} |`;
+      if (rowIdx !== -1) lines[rowIdx] = rowStr;
+      else { lines.splice(end + 1, 0, rowStr); end++; }
+    }
+  });
   applyTransportChange(lines.join("\n"));
 }
 
@@ -1484,39 +1549,76 @@ function renderToday(m) {
 
   const nextTone = !next ? "dim" : next.days <= 7 ? "bad" : next.days <= 30 ? "warn" : "ok";
 
-  /* ---- office transport (book tomorrow's ride) ---- */
-  const tr = transportState(m);
+  /* ---- office transport (calendar-driven booking window) ---- */
+  const tp = transportPlan(m);
   let transportCard = "";
   const trDis = state.busy ? "disabled" : "";
-  if (tr && tr.state !== "hidden") {
-    if (tr.state === "needs" || tr.state === "missed") {
-      const warn = tr.state === "missed";
-      transportCard = `
-      <div class="card transport ${warn ? "tr-late" : "tr-due"}">
-        <h2>🚌 Office transport ${warn ? `<span class="chip bad">cutoff passed</span>` : `<span class="chip warn">by ${esc(tr.cutoff)}</span>`}</h2>
-        <p class="muted review-note">${warn
-          ? `The ${esc(tr.cutoff)} window to book <b>${esc(tr.niceDate)}</b> has passed. If you still managed it, mark it booked.`
-          : `Book your ride for <b>${esc(tr.niceDate)}</b> before <b>${esc(tr.cutoff)}</b>.`}</p>
-        <a class="btn" id="btn-tr-open" href="${esc(tr.site)}" target="_blank" rel="noopener">Open booking site ↗</a>
-        <div style="height:8px"></div>
-        <button class="btn secondary" id="btn-tr-booked" ${trDis}>Mark booked ✓</button>
-        <button class="show-toggle" id="btn-tr-off">It's a day off — no ride</button>
-      </div>`;
-    } else if (tr.state === "booked") {
-      transportCard = `
-      <div class="card transport tr-ok">
-        <h2>🚌 Office transport <span class="chip ok">booked ✓</span></h2>
-        <p class="muted review-note">Ride booked for <b>${esc(tr.niceDate)}</b>.</p>
-        <button class="show-toggle" id="btn-tr-undo" ${trDis}>Undo</button>
-      </div>`;
-    } else if (tr.state === "off") {
-      transportCard = `
-      <div class="card transport">
-        <h2>🚌 Office transport <span class="chip dim">day off</span></h2>
-        <p class="muted review-note">No ride needed for <b>${esc(tr.niceDate)}</b>.</p>
-        <button class="show-toggle" id="btn-tr-undo" ${trDis}>Undo</button>
-      </div>`;
+  if (tp) {
+    const pending = tp.pending;
+    const actioned = tp.targets.filter((x) => x.status !== "pending");
+    const multi = tp.targets.length > 1;   // the Friday Sat+Sun+Mon window
+
+    let head, body = "";
+    if (pending.length) {
+      const late = tp.pastCutoff;
+      head = `<h2>🚌 Office transport ${late
+        ? `<span class="chip bad">cutoff passed</span>`
+        : `<span class="chip warn">by ${esc(tp.cutoff)}</span>`}</h2>`;
+      body = `
+        <p class="muted review-note">${late
+          ? `The ${esc(tp.cutoff)} window has passed. If you still got ${multi ? "them" : "it"} booked, mark ${multi ? "them" : "it"} below.`
+          : multi
+            ? `Friday window — <b>${pending.length} rides</b> must be booked today before <b>${esc(tp.cutoff)}</b>.`
+            : `Book your ride for <b>${esc(pending[0].nice)}</b> before <b>${esc(tp.cutoff)}</b>.`}</p>
+        ${pending.map((d) => `
+          <div class="row tr-target">
+            <div class="r-main">
+              <div class="r-title">${esc(d.short)}</div>
+              <div class="r-sub">${d.shift ? esc(d.shift) : (d.isWork ? "shift time unknown" : "no shift on the calendar")}</div>
+            </div>
+            <div class="r-end"><button class="btn secondary tr-mini" data-tr-book="${esc(d.date)}" ${trDis}>Booked ✓</button></div>
+          </div>`).join("")}
+        <a class="btn" id="btn-tr-open" href="${esc(tp.site)}" target="_blank" rel="noopener">Open booking site ↗</a>
+        ${pending.length > 1
+          ? `<div style="height:8px"></div><button class="btn secondary" id="btn-tr-book-all" ${trDis}>Mark all ${pending.length} booked ✓</button>`
+          : ""}
+        <button class="show-toggle" id="btn-tr-off-all">${pending.length > 1 ? "No rides needed — days off" : "It's a day off — no ride"}</button>`;
+    } else if (tp.targets.length) {
+      const allBooked = actioned.every((x) => x.status === "booked");
+      head = `<h2>🚌 Office transport ${allBooked
+        ? `<span class="chip ok">booked ✓</span>`
+        : `<span class="chip dim">day off</span>`}</h2>`;
+      body = `<p class="muted review-note">${actioned.map((d) =>
+        `${esc(d.short)}${d.status === "off" ? " — off" : d.shift ? ` · ${esc(d.shift)}` : ""}`).join("<br>")}</p>
+        <button class="show-toggle" id="btn-tr-undo-all" ${trDis}>Undo</button>`;
+    } else {
+      head = `<h2>🚌 Office transport <span class="chip dim">nothing to book</span></h2>`;
+      body = `<p class="muted review-note">${tp.hasWorkData
+        ? "No shift on the next bookable day."
+        : "No shifts on your Work calendar yet — add them and this fills in."}</p>`;
     }
+
+    /* week strip — tap a day to cycle booked → off → clear */
+    const strip = `
+      <button class="show-toggle" id="btn-tr-week">${state.transportWeek ? "Hide week" : "Show the week"}</button>
+      ${state.transportWeek ? `
+      <div class="tr-week">
+        ${tp.week.map((d) => {
+          const cls = d.status === "booked" ? "ok" : d.status === "off" ? "dim"
+            : d.isWork ? (d.windowGone ? "bad" : "warn") : "dim";
+          const mark = d.status === "booked" ? "✅" : d.status === "off" ? "🚫" : d.isWork ? "•" : "–";
+          return `<button class="tr-day ${d.isWork ? "work" : ""}" data-tr-cycle="${esc(d.date)}" ${trDis}>
+            <span class="trd-dow">${esc(d.dow)}</span>
+            <span class="trd-mark chip ${cls}">${mark}</span>
+            <span class="trd-shift">${d.shift ? esc(d.shift.replace("–", "-")) : (d.isWork ? "work" : "off")}</span>
+          </button>`;
+        }).join("")}
+      </div>
+      <p class="muted" style="font-size:0.7rem;padding:2px 4px 0">Tap a day to cycle booked → off → clear. Times come from your Work calendar.</p>` : ""}`;
+
+    transportCard = `<div class="card transport ${pending.length ? (tp.pastCutoff ? "tr-late" : "tr-due") : "tr-ok"}">
+      ${head}${body}${strip}
+    </div>`;
   }
 
   return `
@@ -2137,13 +2239,29 @@ function render() {
     const studyOpen = $("#btn-study-open");
     if (studyOpen) studyOpen.onclick = () => { state.studyDoc = true; showBars(); render(); scrollTo(0, 0); };
 
-    const trs = transportState(m);
-    const trBooked = $("#btn-tr-booked");
-    if (trBooked) trBooked.onclick = () => setTransport(trs.date, "✅ Booked");
-    const trOff = $("#btn-tr-off");
-    if (trOff) trOff.onclick = () => setTransport(trs.date, "🚫 Off");
-    const trUndo = $("#btn-tr-undo");
-    if (trUndo) trUndo.onclick = () => setTransport(trs.date, null);
+    const tpl = transportPlan(m);
+    if (tpl) {
+      document.querySelectorAll("[data-tr-book]").forEach((b) => {
+        b.onclick = () => setTransport(b.dataset.trBook, "✅ Booked");
+      });
+      const bookAll = $("#btn-tr-book-all");
+      if (bookAll) bookAll.onclick = () => setTransport(tpl.pending.map((d) => d.date), "✅ Booked");
+      const offAll = $("#btn-tr-off-all");
+      if (offAll) offAll.onclick = () => setTransport(tpl.pending.map((d) => d.date), "🚫 Off");
+      const undoAll = $("#btn-tr-undo-all");
+      if (undoAll) undoAll.onclick = () => setTransport(tpl.targets.map((d) => d.date), null);
+      const wk = $("#btn-tr-week");
+      if (wk) wk.onclick = () => { state.transportWeek = !state.transportWeek; render(); };
+      /* strip: pending → booked → off → clear */
+      document.querySelectorAll("[data-tr-cycle]").forEach((b) => {
+        b.onclick = () => {
+          const date = b.dataset.trCycle;
+          const cur = tpl.week.find((d) => d.date === date);
+          const next = !cur || cur.status === "pending" ? "✅ Booked" : cur.status === "booked" ? "🚫 Off" : null;
+          setTransport(date, next);
+        };
+      });
+    }
     const editInput = $("#task-edit-input");
     if (editInput) {
       editInput.focus();
