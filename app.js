@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v40";
+const APP_VERSION = "v41";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -101,6 +101,12 @@ let _dailyTimer = null;
 let _habitTimer = null;
 let _savingsTimer = null;
 const SAVE_DELAY = 2000;
+
+/* habits ring geometry — shared between renderHabits (draws it) and the
+   click handler (animates it), so the two never drift apart */
+const HABIT_RING_R = 34;
+const HABIT_RING_C = 2 * Math.PI * HABIT_RING_R;
+const habitRingOffset = (done, total) => (total ? HABIT_RING_C * (1 - done / total) : HABIT_RING_C);
 
 /* ---------- icons (feather-style, stroke = currentColor) ---------- */
 
@@ -2094,8 +2100,7 @@ function renderHabits(m) {
   const dis = state.busy ? "disabled" : "";
   const editing = state.habitsEdit;
 
-  const R = 34, C = 2 * Math.PI * R;
-  const ringOffset = total ? C * (1 - done / total) : C;
+  const ringOffset = habitRingOffset(done, total);
   const ringMsg = !total ? "" : done === total ? "All done — closed the ring 🎯"
     : `${total - done} more to close the ring`;
 
@@ -2103,8 +2108,8 @@ function renderHabits(m) {
   <div class="card ring-card">
     <div class="ring-wrap">
       <svg width="84" height="84" viewBox="0 0 84 84">
-        <circle class="ring-track" cx="42" cy="42" r="${R}"/>
-        <circle class="ring-fill" cx="42" cy="42" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="${ringOffset}"/>
+        <circle class="ring-track" cx="42" cy="42" r="${HABIT_RING_R}"/>
+        <circle class="ring-fill" cx="42" cy="42" r="${HABIT_RING_R}" stroke-dasharray="${HABIT_RING_C}" stroke-dashoffset="${ringOffset}"/>
       </svg>
       <div class="ring-label"><div class="ring-num">${done}</div><div class="ring-den">of ${total}</div></div>
     </div>
@@ -2373,8 +2378,21 @@ function render() {
         if (state.habitsEdit) return;
         const h = m.habits[parseInt(b.dataset.habit, 10)];
         if (!h) return;
+        const total = m.habits.length;
+        const doneBefore = m.habits.filter((x) => x.doneToday).length;
+        const doneAfter = h.doneToday ? doneBefore - 1 : doneBefore + 1;
         state.habitPop = h.name;
         toggleHabit(h.name);
+        /* the ring is a fresh SVG node every render, so a plain CSS transition
+           on stroke-dashoffset has no prior value to animate from — drive it
+           with the Web Animations API instead, from the pre-toggle fill to the new one */
+        const ring = document.querySelector(".ring-fill");
+        if (ring) {
+          ring.animate(
+            [{ strokeDashoffset: habitRingOffset(doneBefore, total) }, { strokeDashoffset: habitRingOffset(doneAfter, total) }],
+            { duration: 500, easing: "cubic-bezier(.34,1.56,.64,1)", fill: "forwards" }
+          );
+        }
         /* clear the one-shot pop flag once the animation's had time to play,
            so it doesn't replay on the next unrelated render (e.g. the save) */
         setTimeout(() => {
