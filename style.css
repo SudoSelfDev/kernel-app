@@ -18,6 +18,13 @@
   --chip-info-bg: #14283f; --chip-info-fg: #60a5fa;
   --danger-bg: #3a1a1a;    --danger-border: #5c2626; --danger-fg: #f87171;
   --radius: 14px;
+
+  /* per-tab personality accents */
+  --hue-today: #fb923c;   --hue-today-dim: #3a2410;
+  --hue-habits: #a78bfa;  --hue-habits-dim: #2e2350;
+  --hue-money: #4ade80;   --hue-money-dim: #1d3528;
+  --hue-read: #38bdf8;    --hue-read-dim: #0c2a3a;
+  --hue-indrive: #a7e92f; --hue-indrive-dim: #23310a;
 }
 
 html[data-theme="light"] {
@@ -39,6 +46,12 @@ html[data-theme="light"] {
   --chip-bad-bg: #fee2e2;  --chip-bad-fg: #dc2626;
   --chip-info-bg: #dbeafe; --chip-info-fg: #1d4ed8;
   --danger-bg: #fee2e2;    --danger-border: #fca5a5; --danger-fg: #b91c1c;
+
+  --hue-today: #ea580c;   --hue-today-dim: #ffedd5;
+  --hue-habits: #7c3aed;  --hue-habits-dim: #ede9fe;
+  --hue-money: #16a34a;   --hue-money-dim: #dcfce7;
+  --hue-read: #0284c7;    --hue-read-dim: #dbeafe;
+  --hue-indrive: #5a7a15; --hue-indrive-dim: #eef9d0;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -61,7 +74,11 @@ html, body {
   transition: transform 0.25s ease, opacity 0.25s ease;
 }
 body.bars-hidden #topbar { transform: translateY(-110%); opacity: 0; }
-.brand { font-weight: 700; font-size: 1.05rem; letter-spacing: 0.02em; }
+.brand {
+  font-weight: 700; font-size: 1.05rem; letter-spacing: 0.02em;
+  background: linear-gradient(90deg, var(--hue-today), var(--hue-indrive));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
 .sync-status { flex: 1; font-size: 0.78rem; font-weight: 600; color: var(--muted); text-align: right; }
 .icon-btn {
   background: var(--surface); color: var(--text);
@@ -105,6 +122,11 @@ body.bars-hidden #tabbar {
 .tab .ticon { height: 20px; display: flex; align-items: center; justify-content: center; }
 .tab .ticon svg { display: block; }
 .tab.active { color: var(--accent); }
+.tab[data-view="today"].active    { color: var(--hue-today); }
+.tab[data-view="habits"].active   { color: var(--hue-habits); }
+.tab[data-view="money"].active    { color: var(--hue-money); }
+.tab[data-view="articles"].active { color: var(--hue-read); }
+.tab[data-view="indrive"].active  { color: var(--hue-indrive); }
 .tab:active { background: var(--surface2); }
 
 .card {
@@ -204,6 +226,7 @@ body.bars-hidden #tabbar {
 .card.transport.tr-late { border-left-color: var(--red); }
 .card.transport.tr-ok { border-left-color: var(--accent); }
 .card.transport .btn { margin-top: 4px; }
+.card.transport h2 { color: var(--hue-today); }
 .tr-target { gap: 8px; }
 .btn.tr-mini { width: auto; margin: 0; padding: 7px 12px; font-size: 0.8rem; }
 
@@ -313,7 +336,11 @@ input::placeholder { color: var(--muted); }
 /* ---------- today — hero / coach / duo tiles ---------- */
 
 .hero { padding: 6px 2px 0; }
-.hero-date { font-size: 1.55rem; font-weight: 800; line-height: 1.1; }
+.hero-date {
+  font-size: 1.55rem; font-weight: 800; line-height: 1.1;
+  background: linear-gradient(90deg, var(--hue-today), var(--hue-indrive));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
 .hero-sub { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
 
 .coach {
@@ -438,7 +465,7 @@ button.duo-tile:active { background: var(--surface2); }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 0 12px;
 }
-.search-bar:focus-within { border-color: var(--accent); }
+.search-bar:focus-within { border-color: var(--hue-read); }
 .search-bar svg { color: var(--muted); flex-shrink: 0; }
 .search-bar input {
   flex: 1; background: none; border: none; border-radius: 0;
@@ -459,7 +486,7 @@ button.duo-tile:active { background: var(--surface2); }
   color: var(--text); font-family: inherit;
 }
 .art-card:active { background: var(--surface2); }
-.art-title { font-size: 1.02rem; font-weight: 700; line-height: 1.35; margin-bottom: 6px; }
+.art-title { font-size: 1.02rem; font-weight: 700; line-height: 1.35; margin-bottom: 6px; color: var(--hue-read); }
 .art-excerpt { font-size: 0.82rem; color: var(--muted); line-height: 1.5; margin-bottom: 8px; }
 .art-meta { font-size: 0.72rem; color: var(--muted); }
 
@@ -536,13 +563,13 @@ button.duo-tile:active { background: var(--surface2); }
   border: 1.5px solid var(--muted); border-radius: 7px;
   text-align: center; line-height: 19px; font-size: 13px;
 }
-.habit.done .box { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.habit.done .box { background: var(--hue-habits-dim); border-color: var(--hue-habits); color: var(--hue-habits); }
 .hb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .hb-name { font-size: 0.92rem; font-weight: 600; }
 .habit.done .hb-name { color: var(--muted); }
 .hb-week { display: flex; gap: 4px; }
 .hb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--border); }
-.hb-dot.on { background: var(--accent); border-color: var(--accent); }
+.hb-dot.on { background: var(--hue-habits); border-color: var(--hue-habits); }
 .hb-dot.today:not(.on) { border-color: var(--muted); }
 .hb-streak { flex-shrink: 0; font-size: 0.82rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
 .hb-streak.hot { color: var(--amber); }
@@ -561,14 +588,17 @@ button.duo-tile:active { background: var(--surface2); }
 .right { text-align: right; }
 /* ---------- finances — savings goal ---------- */
 
-.goal-card { border-color: var(--accent); }
+.goal-card {
+  border-color: var(--hue-money);
+  background: linear-gradient(120deg, var(--hue-money-dim) 0%, var(--surface) 45%);
+}
 .goal-head {
   display: flex; justify-content: space-between; align-items: baseline;
   gap: 8px; margin-bottom: 10px;
 }
 .goal-tag {
   font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em;
-  color: var(--accent);
+  color: var(--hue-money);
 }
 .goal-sub { font-size: 0.72rem; color: var(--muted); text-align: right; }
 
@@ -678,10 +708,22 @@ a.tel { color: var(--blue); text-decoration: none; }
 .habit-del:active { background: var(--chip-bad-bg); }
 
 .text-btn {
-  background: none; border: none; color: var(--accent);
+  background: none; border: none; color: var(--hue-habits);
   font-size: 0.78rem; font-weight: 600; cursor: pointer;
   padding: 3px 6px; border-radius: 6px;
   text-transform: none; letter-spacing: 0;
 }
-.text-btn:active { background: var(--accent-dim); }
+.text-btn:active { background: var(--hue-habits-dim); }
 
+
+/* ---------- inDrive tab — scoped brand-green accents ---------- */
+[data-tab="indrive"] .chip.ok {
+  background: var(--hue-indrive-dim); color: var(--hue-indrive);
+}
+[data-tab="indrive"] .show-toggle:not(.danger),
+[data-tab="indrive"] .row .r-end b {
+  color: var(--hue-indrive);
+}
+[data-tab="indrive"] .btn:not(.secondary):not(.danger) {
+  background: var(--hue-indrive); color: #12210a;
+}

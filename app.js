@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v37";
+const APP_VERSION = "v38";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -122,11 +122,22 @@ const ICONS = {
   chevronDown: '<polyline points="6 9 12 15 18 9"/>',
   checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.27"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>',
-  car: '<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
 };
 
-const icon = (name, size = 20) =>
-  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+/* inDrive's real mark — a rounded square in their brand green ("Inch Worm",
+   #A7E92F) with an "i" merging into a "D", per their brand guide. Filled/
+   colored rather than a stroke=currentColor outline like the rest of the
+   set, so it reads as the actual inDrive icon rather than another line glyph. */
+const INDRIVE_ICON =
+  '<rect x="1" y="1" width="22" height="22" rx="6.5" fill="#A7E92F"/>' +
+  '<circle cx="8" cy="6.2" r="1.5" fill="#12210a"/>' +
+  '<path d="M8 9.5V18" stroke="#12210a" stroke-width="2.3" stroke-linecap="round"/>' +
+  '<path d="M8 9.5c7 0 9.5 2 9.5 4.5S15 18 8 18" fill="none" stroke="#12210a" stroke-width="2.3" stroke-linecap="round"/>';
+
+const icon = (name, size = 20) => {
+  if (name === "indrive") return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">${INDRIVE_ICON}</svg>`;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+};
 
 /* ---------- theme ---------- */
 
@@ -2286,6 +2297,7 @@ function render() {
     : v === "habits" ? renderHabits(m)
     : renderSettings();
   $("#view").innerHTML = html;
+  $("#view").dataset.tab = state.studyDoc ? "study" : v;
 
   if (state.studyDoc) {
     const close = () => { state.studyDoc = false; showBars(); render(); scrollTo(0, 0); };
