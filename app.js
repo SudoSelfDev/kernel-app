@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v38";
+const APP_VERSION = "v39";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -1184,12 +1184,12 @@ function buildModel() {
     rows.forEach((r) => { if (r.Date) byDate[r.Date] = r; });
     const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     m.habits = names.map((name) => {
-      const week = [];
-      for (let i = 6; i >= 0; i--) {
+      const history = [];
+      for (let i = 13; i >= 0; i--) {
         const d = new Date(); d.setDate(d.getDate() - i);
-        week.push(!!(byDate[iso(d)] && (byDate[iso(d)][name] || "").includes("✅")));
+        history.push(!!(byDate[iso(d)] && (byDate[iso(d)][name] || "").includes("✅")));
       }
-      const doneToday = week[6];
+      const doneToday = history[13];
       /* streak counts back from today, or from yesterday if today isn't ticked yet */
       let streak = 0;
       for (let i = doneToday ? 0 : 1; ; i++) {
@@ -1197,7 +1197,7 @@ function buildModel() {
         if (byDate[iso(d)] && (byDate[iso(d)][name] || "").includes("✅")) streak++;
         else break;
       }
-      return { name, doneToday, streak, week };
+      return { name, doneToday, streak, history };
     });
   }
 
@@ -2134,33 +2134,55 @@ function renderHabits(m) {
   if (!m.habits) {
     return `<div class="card"><div class="empty">No habit log synced yet — pull to refresh, or check that HabitLog.md exists in the vault</div></div>`;
   }
+  const total = m.habits.length;
   const done = m.habits.filter((h) => h.doneToday).length;
   const dis = state.busy ? "disabled" : "";
   const editing = state.habitsEdit;
 
+  const R = 34, C = 2 * Math.PI * R;
+  const ringOffset = total ? C * (1 - done / total) : C;
+  const ringMsg = !total ? "" : done === total ? "All done — closed the ring 🎯"
+    : `${total - done} more to close the ring`;
+
+  const ringCard = total ? `
+  <div class="card ring-card">
+    <div class="ring-wrap">
+      <svg width="84" height="84" viewBox="0 0 84 84">
+        <circle class="ring-track" cx="42" cy="42" r="${R}"/>
+        <circle class="ring-fill" cx="42" cy="42" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="${ringOffset}"/>
+      </svg>
+      <div class="ring-label"><div class="ring-num">${done}</div><div class="ring-den">of ${total}</div></div>
+    </div>
+    <div class="ring-text">
+      <h2>Today's habits</h2>
+      <p>${ringMsg}</p>
+    </div>
+  </div>` : "";
+
   const habitRows = m.habits.map((h, i) => `
     <div class="habit-wrap${editing ? " editing" : ""}">
       ${editing ? `<button class="habit-del" data-del-habit="${esc(h.name)}" aria-label="Remove ${esc(h.name)}">${icon("x", 15)}</button>` : ""}
-      <button class="habit ${h.doneToday ? "done" : ""}" data-habit="${i}" ${dis}>
-        <span class="box">${h.doneToday ? "✓" : ""}</span>
-        <span class="hb-main">
-          <span class="hb-name">${esc(h.name)}</span>
-          <span class="hb-week">${h.week.map((d, j) => `<span class="hb-dot ${d ? "on" : ""} ${j === 6 ? "today" : ""}"></span>`).join("")}</span>
+      <button class="hcard ${h.doneToday ? "done" : ""}" data-habit="${i}" ${dis}>
+        <span class="hbox">${h.doneToday ? "✓" : "—"}</span>
+        <span class="hinfo">
+          <span class="hname">${esc(h.name)}</span>
+          <span class="hstreak ${h.streak > 0 ? "hot" : ""}">${h.streak > 0 ? `${h.streak}🔥 day streak` : "no streak yet"}</span>
         </span>
-        <span class="hb-streak ${h.streak > 0 ? "hot" : ""}">${h.streak > 0 ? `${h.streak}🔥` : "—"}</span>
+        <span class="heatmap">${h.history.map((d, j) =>
+          `<span class="hm-cell ${d ? "on" : ""} ${j === 13 ? "today" : ""}"></span>`).join("")}</span>
       </button>
     </div>`).join("");
 
   return `
+  ${ringCard}
   <div class="card">
     <h2>
-      <span>Today <span class="h-extra muted">${done}/${m.habits.length} done${state.busy ? " · saving…" : ""}</span></span>
-      ${m.habits.length > 0 ? `<button class="text-btn" id="btn-habits-edit">${editing ? "Done" : "Edit"}</button>` : ""}
+      <span>Habits <span class="h-extra muted">14-day history${state.busy ? " · saving…" : ""}</span></span>
+      ${total > 0 ? `<button class="text-btn" id="btn-habits-edit">${editing ? "Done" : "Edit"}</button>` : ""}
     </h2>
-    ${m.habits.length === 0 ? `<div class="empty">No habits yet — tap + to add one</div>` : ""}
+    ${total === 0 ? `<div class="empty">No habits yet — tap + to add one</div>` : ""}
     ${habitRows}
-  </div>
-  <p class="muted" style="font-size:0.75rem;padding:0 4px;">Dots show the last 7 days. Edits sync automatically.</p>`;
+  </div>`;
 }
 
 function renderArticles(m) {
