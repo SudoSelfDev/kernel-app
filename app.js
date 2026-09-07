@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v35";
+const APP_VERSION = "v36";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -23,6 +23,7 @@ const PATHS = {
   research: atob("MzBfTGlicmFyeS9SZXNlYXJjaA=="),
   masterplan: atob("MTBfUHJvamVjdHMvRGFyU3RyZWFtL21hc3Rlci1wbGFuLm1k"),
   habits: atob("MjBfTGlmZWxvZy9IYWJpdExvZy5tZA=="),
+  indrive: atob("MTBfUHJvamVjdHMvSW5Ecml2ZS9pbmRyaXZlLWluY29tZS5tZA=="),
 };
 
 const LS_TOKEN = "kernel_pat";
@@ -50,6 +51,8 @@ const state = {
   studyDoc: false,    // when true, the cloud study plan opens in the in-app reader
   articleReturn: null, // view to return to when leaving an article (e.g. opened from a task)
   transportWeek: null, // 7-day strip on the transport card: null = auto, true/false = user choice
+  indriveForm: false, // "Add entry" form on the inDrive tab expanded
+  indriveEditDate: null, // date (YYYY-MM-DD) of the row being edited in the form, or null for a new entry
 };
 
 /* ---------- confetti ---------- */
@@ -120,6 +123,7 @@ const ICONS = {
   chevronDown: '<polyline points="6 9 12 15 18 9"/>',
   checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.27"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>',
+  car: '<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
 };
 
 const icon = (name, size = 20) =>
@@ -274,7 +278,7 @@ async function syncAll() {
   setSyncStatus("Syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, study, studyplan, daily, schedule, researchDir, masterplan, habits, transport] = await Promise.all([
+    const [clients, savings, debts, study, studyplan, daily, schedule, researchDir, masterplan, habits, transport, indrive] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
@@ -286,6 +290,7 @@ async function syncAll() {
       fetchRaw(PATHS.masterplan, { optional: true }),
       fetchWithSha(PATHS.habits, { optional: true }),
       fetchRaw(PATHS.transport, { optional: true }),
+      fetchRaw(PATHS.indrive, { optional: true }),
     ]);
     let articles = [];
     if (Array.isArray(researchDir)) {
@@ -293,7 +298,7 @@ async function syncAll() {
       const texts = await Promise.all(mds.map((f) => fetchRaw(`${PATHS.research}/${f.name}`)));
       articles = mds.map((f, i) => ({ name: f.name, text: texts[i] }));
     }
-    state.files = { clients, savings, debts, study, studyplan, daily, schedule, articles, masterplan, habits, transport };
+    state.files = { clients, savings, debts, study, studyplan, daily, schedule, articles, masterplan, habits, transport, indrive };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -1024,7 +1029,7 @@ function buildModel() {
   const f = state.files;
   const m = {
     active: [], leads: [], churned: [], savings: {}, debts: [], debtTotal: null,
-    study: null, tasks: null, schedule: null, articles: [], review: null, transport: null,
+    study: null, tasks: null, schedule: null, articles: [], review: null, transport: null, indrive: null,
   };
 
   if (f.clients) {
@@ -1129,6 +1134,28 @@ function buildModel() {
       if (vals[0]) log[vals[0].trim()] = (vals[1] || "").trim();
     });
     m.transport = { cutoff, site, log };
+  }
+
+  if (f.indrive) {
+    const t = f.indrive;
+    const price = num(((t.match(/^\*\*Diesel price \(MAD\/L\):\*\*\s*(.+)$/m) || [])[1] || "15").trim());
+    const consumption = num(((t.match(/^\*\*Consumption \(L\/100km\):\*\*\s*(.+)$/m) || [])[1] || "6.5").trim());
+    const rows = parseTable(section(t, "## Log")).map((r) => {
+      const vals = Object.values(r);
+      return {
+        date: (vals[0] || "").trim(),
+        km: num(vals[1]) || 0,
+        gross: num(vals[2]) || 0,
+        diesel: num(vals[3]) || 0,
+        net: num(vals[4]) || 0,
+        notes: (vals[5] || "").trim(),
+      };
+    }).filter((r) => r.date);
+    rows.sort((a, b) => b.date.localeCompare(a.date));
+    const totalNet = rows.reduce((s, r) => s + r.net, 0);
+    const totalGross = rows.reduce((s, r) => s + r.gross, 0);
+    const totalKm = rows.reduce((s, r) => s + r.km, 0);
+    m.indrive = { price, consumption, rows, totalNet, totalGross, totalKm };
   }
 
   if (f.daily && typeof f.daily.text === "string") {
@@ -1475,6 +1502,88 @@ function setTransport(dates, status) {
   applyTransportChange(lines.join("\n"));
 }
 
+/* ---------- inDrive income log ---------- */
+
+let _indriveTimer = null;
+const indriveText = () => state.files.indrive || "";
+
+function applyIndriveChange(newText) {
+  state.files.indrive = newText;
+  render();
+  if (_indriveTimer) clearTimeout(_indriveTimer);
+  _indriveTimer = setTimeout(flushIndrive, SAVE_DELAY);
+}
+
+async function flushIndrive() {
+  _indriveTimer = null;
+  const text = indriveText();
+  if (!text) return;
+  state.busy = true;
+  render();
+  try {
+    const serverText = await fetchRaw(PATHS.indrive);
+    const baseSha = await gitBlobSha(serverText);
+    await putFile(PATHS.indrive, text, "kernel-app: update inDrive log", baseSha);
+    state.lastSync = Date.now();
+    saveCache();
+    state.error = null;
+  } catch (e) {
+    if (e.message === "auth-write") state.error = "Write rejected — your token needs Contents: Read and write.";
+    else if (e.message === "conflict") { state.error = "inDrive log changed on GitHub — refreshing."; state.busy = false; await syncAll(); return; }
+    else state.error = "Couldn't save — check your connection and try again.";
+  }
+  state.busy = false;
+  render();
+}
+
+/* upsert one day's row (one entry per date — re-adding the same date overwrites it) */
+function setIndriveEntry(date, km, gross, notes) {
+  const m = buildModel();
+  const price = m.indrive ? m.indrive.price : 15;
+  const consumption = m.indrive ? m.indrive.consumption : 6.5;
+  const diesel = Math.round((km / 100) * consumption * price * 100) / 100;
+  const net = Math.round((gross - diesel) * 100) / 100;
+
+  const lines = indriveText().split("\n");
+  const h = lines.findIndex((l) => /^##\s+log/i.test(l.trim()));
+  if (h === -1) return;
+  let start = -1, end = -1;
+  for (let i = h + 1; i < lines.length; i++) {
+    const tr = lines[i].trim();
+    if (tr.startsWith("|")) { if (start === -1) start = i; end = i; }
+    else if (start !== -1) break;
+    else if (/^#+\s/.test(tr)) break;
+  }
+  if (start === -1) return;
+
+  const rowStr = `| ${date} | ${km} | ${gross} | ${diesel} | ${net} | ${notes || ""} |`;
+  let rowIdx = -1;
+  for (let i = start + 2; i <= end; i++) {
+    if ((lines[i].split("|")[1] || "").trim() === date) { rowIdx = i; break; }
+  }
+  if (rowIdx !== -1) lines[rowIdx] = rowStr;
+  else lines.splice(end + 1, 0, rowStr);
+  applyIndriveChange(lines.join("\n"));
+}
+
+function removeIndriveEntry(date) {
+  const lines = indriveText().split("\n");
+  const h = lines.findIndex((l) => /^##\s+log/i.test(l.trim()));
+  if (h === -1) return;
+  let start = -1, end = -1;
+  for (let i = h + 1; i < lines.length; i++) {
+    const tr = lines[i].trim();
+    if (tr.startsWith("|")) { if (start === -1) start = i; end = i; }
+    else if (start !== -1) break;
+    else if (/^#+\s/.test(tr)) break;
+  }
+  if (start === -1) return;
+  for (let i = start + 2; i <= end; i++) {
+    if ((lines[i].split("|")[1] || "").trim() === date) { lines.splice(i, 1); break; }
+  }
+  applyIndriveChange(lines.join("\n"));
+}
+
 function renderToday(m) {
   const renewals = [...m.active].filter((c) => c.days !== null).sort((a, b) => a.days - b.days);
   const next = renewals[0];
@@ -1781,6 +1890,56 @@ function scriptsCard(m) {
         <span class="script-copy">${icon("copy", 16)}</span>
       </button>`).join("") : ""}
   </div>`;
+}
+
+function renderIndrive(m) {
+  const dis = state.busy ? "disabled" : "";
+  const d = m.indrive || { price: 15, consumption: 6.5, rows: [], totalNet: 0, totalGross: 0, totalKm: 0 };
+
+  const totalsCard = `
+    <div class="card">
+      <h2>🚗 inDrive <span class="chip ok">${d.totalNet.toLocaleString()} MAD net</span></h2>
+      <p class="muted review-note">${d.rows.length} day${d.rows.length === 1 ? "" : "s"} logged · ${d.totalKm.toLocaleString()} km · ${d.totalGross.toLocaleString()} MAD gross so far</p>
+    </div>`;
+
+  let formCard;
+  if (state.indriveForm) {
+    const editing = !!state.indriveEditDate;
+    const ex = editing ? d.rows.find((r) => r.date === state.indriveEditDate) : null;
+    formCard = `
+      <div class="card">
+        <label class="rv-label">Date</label>
+        <input type="date" id="id-date" value="${esc(ex ? ex.date : todayIso())}" ${editing ? "readonly" : ""}>
+        <label class="rv-label">Km driven</label>
+        <input type="number" inputmode="decimal" id="id-km" placeholder="0" value="${ex ? ex.km : ""}">
+        <label class="rv-label">Gross earned (MAD)</label>
+        <input type="number" inputmode="decimal" id="id-gross" placeholder="0" value="${ex ? ex.gross : ""}">
+        <label class="rv-label">Notes <span class="muted">· optional</span></label>
+        <input type="text" id="id-notes" placeholder="" value="${ex ? esc(ex.notes) : ""}">
+        <p class="muted" style="font-size:0.72rem;margin-top:4px">Diesel is calculated for you at ${d.consumption} L/100km × ${d.price} MAD/L.</p>
+        <div style="height:12px"></div>
+        <button class="btn" id="btn-indrive-save" ${dis}>${editing ? "Save changes" : "Add entry"}</button>
+        ${editing ? `<button class="show-toggle danger" id="btn-indrive-remove" ${dis}>Remove entry</button>` : ""}
+        <button class="show-toggle" id="btn-indrive-cancel">Cancel</button>
+      </div>`;
+  } else {
+    formCard = `<button class="show-toggle" id="btn-indrive-add">+ Add entry</button>`;
+  }
+
+  const logCard = `
+    <div class="card">
+      <h2>Log</h2>
+      ${d.rows.length ? d.rows.map((r) => `
+        <div class="row" data-indrive-edit="${esc(r.date)}">
+          <div class="r-main">
+            <div class="r-title">${esc(r.date)}</div>
+            <div class="r-sub">${r.km} km · ${r.gross} gross − ${r.diesel} diesel${r.notes ? " · " + esc(r.notes) : ""}</div>
+          </div>
+          <div class="r-end"><b>${r.net.toLocaleString()}</b> <span class="muted">MAD</span></div>
+        </div>`).join("") : `<div class="empty">Nothing logged yet — tap + Add entry</div>`}
+    </div>`;
+
+  return totalsCard + formCard + logCard;
 }
 
 function renderClients(m) {
@@ -2187,6 +2346,7 @@ function render() {
   else if (!state.files.clients && !state.error) html += `<div class="empty">Loading vault…</div>`;
   else html += v === "today" ? renderToday(m)
     : v === "clients" ? renderClients(m)
+    : v === "indrive" ? renderIndrive(m)
     : v === "money" ? renderMoney(m)
     : v === "articles" ? renderArticles(m)
     : v === "habits" ? renderHabits(m)
@@ -2363,6 +2523,37 @@ function render() {
       removeDebt(state.debtEdit);
     };
   }
+  if (v === "indrive") {
+    document.querySelectorAll("[data-indrive-edit]").forEach((el) => {
+      el.onclick = () => { state.indriveForm = true; state.indriveEditDate = el.dataset.indriveEdit; render(); };
+    });
+    const idAdd = $("#btn-indrive-add");
+    if (idAdd) idAdd.onclick = () => { state.indriveForm = true; state.indriveEditDate = null; render(); };
+    const idCancel = $("#btn-indrive-cancel");
+    if (idCancel) idCancel.onclick = () => { state.indriveForm = false; state.indriveEditDate = null; render(); };
+    const idSave = $("#btn-indrive-save");
+    if (idSave) idSave.onclick = () => {
+      const date = ($("#id-date")?.value || "").trim();
+      const km = num($("#id-km")?.value);
+      const gross = num($("#id-gross")?.value);
+      const notes = ($("#id-notes")?.value || "").trim();
+      if (!date) { state.error = "Pick a date."; render(); return; }
+      if (km == null) { state.error = "Enter km driven."; render(); return; }
+      if (gross == null) { state.error = "Enter gross earned."; render(); return; }
+      setIndriveEntry(date, km, gross, notes);
+      state.indriveForm = false;
+      state.indriveEditDate = null;
+      render();
+    };
+    const idRemove = $("#btn-indrive-remove");
+    if (idRemove) idRemove.onclick = () => {
+      if (!confirm(`Remove the ${state.indriveEditDate} entry? This can't be undone.`)) return;
+      removeIndriveEntry(state.indriveEditDate);
+      state.indriveForm = false;
+      state.indriveEditDate = null;
+      render();
+    };
+  }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
       b.onclick = () => { state.article = b.dataset.article; state.articleReturn = null; showBars(); render(); scrollTo(0, 0); };
@@ -2483,6 +2674,8 @@ document.querySelectorAll(".tab").forEach((b) => {
     state.habitsEdit = false;
     state.taskEdit = null;
     state.studyDoc = false;
+    state.indriveForm = false;
+    state.indriveEditDate = null;
     showBars();
     render();
     scrollTo(0, 0);
@@ -2502,7 +2695,11 @@ $("#btn-theme").onclick = () => {
 };
 
 $("#fab").innerHTML = icon("plus", 24);
-$("#fab").onclick = () => (state.view === "habits" ? openHabitModal() : openComposer());
+$("#fab").onclick = () => {
+  if (state.view === "habits") return openHabitModal();
+  if (state.view === "indrive") { state.indriveForm = true; state.indriveEditDate = null; showBars(); return render(); }
+  return openComposer();
+};
 $("#composer-cancel").onclick = closeComposer;
 $("#composer").onclick = (e) => { if (e.target.id === "composer") closeComposer(); };
 $("#composer-link-toggle").onclick = () => $("#composer-articles").classList.toggle("hidden");
