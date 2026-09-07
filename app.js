@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v39";
+const APP_VERSION = "v40";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -19,7 +19,6 @@ const PATHS = {
   studyplan: atob("MTBfUHJvamVjdHMvQ2xvdWRfRW5naW5lZXJpbmcvY2xvdWQtc3R1ZHktcGxhbi5tZA=="),
   transport: atob("MjBfTGlmZWxvZy90cmFuc3BvcnQtbG9nLm1k"),
   dailyDir: atob("MjBfTGlmZWxvZy8yMV9EYWlseU5vdGVzLw=="),
-  schedule: atob("MjBfTGlmZWxvZy9zY2hlZHVsZS5qc29u"),
   research: atob("MzBfTGlicmFyeS9SZXNlYXJjaA=="),
   masterplan: atob("MTBfUHJvamVjdHMvRGFyU3RyZWFtL21hc3Rlci1wbGFuLm1k"),
   habits: atob("MjBfTGlmZWxvZy9IYWJpdExvZy5tZA=="),
@@ -52,6 +51,7 @@ const state = {
   transportWeek: null, // 7-day strip on the transport card: null = auto, true/false = user choice
   indriveForm: false, // "Add entry" form on the inDrive tab expanded
   indriveEditDate: null, // date (YYYY-MM-DD) of the row being edited in the form, or null for a new entry
+  habitPop: null, // name of the habit whose checkbox should play the pop-in animation on this render, or null
 };
 
 /* ---------- confetti ---------- */
@@ -288,14 +288,13 @@ async function syncAll() {
   setSyncStatus("Syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, study, studyplan, daily, schedule, researchDir, masterplan, habits, transport, indrive] = await Promise.all([
+    const [clients, savings, debts, study, studyplan, daily, researchDir, masterplan, habits, transport, indrive] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
       fetchRaw(PATHS.study, { optional: true }),
       fetchRaw(PATHS.studyplan, { optional: true }),
       fetchWithSha(todayNotePath(), { optional: true }),
-      fetchRaw(PATHS.schedule, { optional: true }),
       fetchDir(PATHS.research, { optional: true }),
       fetchRaw(PATHS.masterplan, { optional: true }),
       fetchWithSha(PATHS.habits, { optional: true }),
@@ -308,7 +307,7 @@ async function syncAll() {
       const texts = await Promise.all(mds.map((f) => fetchRaw(`${PATHS.research}/${f.name}`)));
       articles = mds.map((f, i) => ({ name: f.name, text: texts[i] }));
     }
-    state.files = { clients, savings, debts, study, studyplan, daily, schedule, articles, masterplan, habits, transport, indrive };
+    state.files = { clients, savings, debts, study, studyplan, daily, articles, masterplan, habits, transport, indrive };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -924,14 +923,6 @@ function statusChip(s) {
   return ["dim", s];
 }
 
-/* stable color per calendar name — hashes into a fixed palette */
-const CAL_PALETTE = ["#60a5fa", "#4ade80", "#fbbf24", "#f87171", "#a78bfa", "#fb923c", "#34d399", "#f472b6"];
-function calColor(name) {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return CAL_PALETTE[h % CAL_PALETTE.length];
-}
-
 function daysUntil(dateStr) {
   const d = new Date(dateStr);
   if (isNaN(d)) return null;
@@ -1025,7 +1016,7 @@ function buildModel() {
   const f = state.files;
   const m = {
     active: [], leads: [], churned: [], savings: {}, debts: [], debtTotal: null,
-    study: null, tasks: null, schedule: null, articles: [], review: null, transport: null, indrive: null,
+    study: null, tasks: null, articles: [], review: null, transport: null, indrive: null,
   };
 
   if (f.clients) {
@@ -1160,18 +1151,6 @@ function buildModel() {
     }
   }
 
-  if (f.schedule) {
-    try {
-      const sch = JSON.parse(f.schedule);
-      const iso = todayIso();
-      m.schedule = {
-        updated: sch.updated || null,
-        events: (sch.events || [])
-          .filter((e) => e.date === iso)
-          .sort((a, b) => `${a.allDay ? 0 : 1}${a.start || ""}`.localeCompare(`${b.allDay ? 0 : 1}${b.start || ""}`)),
-      };
-    } catch { /* malformed schedule.json — treat as absent */ }
-  }
 
   m.habits = null;
   if (f.habits && typeof f.habits.text === "string") {
@@ -1595,25 +1574,6 @@ function renderToday(m) {
               <button class="task-icon-btn del" data-del-line="${t.line}" title="Remove task" aria-label="Remove task" ${dis}>${icon("x", 15)}</button>
             </div>`).join("")}`;
 
-  let scheduleHtml;
-  if (!m.schedule) {
-    scheduleHtml = `<div class="empty">No schedule synced yet — calendar sync runs from the vault repo</div>`;
-  } else if (m.schedule.events.length === 0) {
-    scheduleHtml = `<div class="empty">Nothing scheduled today</div>`;
-  } else {
-    const now = new Date();
-    const hm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    scheduleHtml = m.schedule.events.map((e) => {
-      const live = !e.allDay && e.start && e.end && hm >= e.start && hm < e.end;
-      const dot = e.cal ? `<span class="cal-dot" style="background:${calColor(e.cal)}" title="${esc(e.cal)}"></span>` : "";
-      const calTag = e.cal ? `<span class="cal-tag">${esc(e.cal)}</span>` : "";
-      return `<div class="row">
-        <div class="r-main"><div class="r-title">${dot}${esc(e.title || "Busy")}</div>
-        <div class="r-sub">${e.allDay ? "All day" : `${esc(e.start || "?")} – ${esc(e.end || "?")}`}${calTag}</div></div>
-        <div class="r-end">${live ? `<span class="chip ok">now</span>` : ""}</div>
-      </div>`;
-    }).join("");
-  }
 
   const nextTone = !next ? "dim" : next.days <= 7 ? "bad" : next.days <= 30 ? "warn" : "ok";
 
@@ -1708,11 +1668,6 @@ function renderToday(m) {
   <div class="card">
     <h2>Tasks</h2>
     ${tasksHtml}
-  </div>
-
-  <div class="card">
-    <h2>Schedule ${m.schedule && m.schedule.updated ? `<span class="h-extra muted">synced ${esc(m.schedule.updated.slice(0, 16).replace("T", " "))}</span>` : ""}</h2>
-    ${scheduleHtml}
   </div>
 
   <div class="duo">
@@ -2159,19 +2114,22 @@ function renderHabits(m) {
     </div>
   </div>` : "";
 
-  const habitRows = m.habits.map((h, i) => `
+  const habitRows = m.habits.map((h, i) => {
+    const pop = state.habitPop === h.name && h.doneToday;
+    return `
     <div class="habit-wrap${editing ? " editing" : ""}">
       ${editing ? `<button class="habit-del" data-del-habit="${esc(h.name)}" aria-label="Remove ${esc(h.name)}">${icon("x", 15)}</button>` : ""}
       <button class="hcard ${h.doneToday ? "done" : ""}" data-habit="${i}" ${dis}>
-        <span class="hbox">${h.doneToday ? "✓" : "—"}</span>
+        <span class="hbox${pop ? " pop" : ""}">${h.doneToday ? "✓" : "—"}</span>
         <span class="hinfo">
           <span class="hname">${esc(h.name)}</span>
           <span class="hstreak ${h.streak > 0 ? "hot" : ""}">${h.streak > 0 ? `${h.streak}🔥 day streak` : "no streak yet"}</span>
         </span>
         <span class="heatmap">${h.history.map((d, j) =>
-          `<span class="hm-cell ${d ? "on" : ""} ${j === 13 ? "today" : ""}"></span>`).join("")}</span>
+          `<span class="hm-cell ${d ? "on" : ""} ${j === 13 ? "today" : ""}${pop && j === 13 ? " pop" : ""}"></span>`).join("")}</span>
       </button>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 
   return `
   ${ringCard}
@@ -2274,7 +2232,7 @@ function renderSettings() {
   </div>
   <div class="card">
     <h2>About <span class="h-extra">${APP_VERSION}</span></h2>
-    <p class="muted" style="font-size:0.8rem;line-height:1.5">Kernel — dashboard over a private vault repo. Data is fetched straight from GitHub on this device and cached locally. Task edits are committed back to the vault as you. The Today schedule reads a file kept fresh by a GitHub Action in the vault repo. Nothing is sent anywhere else.</p>
+    <p class="muted" style="font-size:0.8rem;line-height:1.5">Kernel — dashboard over a private vault repo. Data is fetched straight from GitHub on this device and cached locally. Task edits are committed back to the vault as you. Nothing is sent anywhere else.</p>
     <p class="muted" style="font-size:0.72rem;margin-top:8px">Build ${APP_VERSION} · if this looks behind after a deploy, fully close and reopen the app.</p>
   </div>`;
 }
@@ -2414,7 +2372,14 @@ function render() {
       b.onclick = () => {
         if (state.habitsEdit) return;
         const h = m.habits[parseInt(b.dataset.habit, 10)];
-        if (h) toggleHabit(h.name);
+        if (!h) return;
+        state.habitPop = h.name;
+        toggleHabit(h.name);
+        /* clear the one-shot pop flag once the animation's had time to play,
+           so it doesn't replay on the next unrelated render (e.g. the save) */
+        setTimeout(() => {
+          if (state.habitPop === h.name) { state.habitPop = null; render(); }
+        }, 500);
       };
     });
     document.querySelectorAll("[data-del-habit]").forEach((b) => {
