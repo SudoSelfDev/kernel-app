@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v36";
+const APP_VERSION = "v37";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -44,7 +44,6 @@ const state = {
   habitsEdit: false,  // edit mode for habit list
   trackerExpanded: false, // show projected months in finances
   reviewEdit: false,  // force-show the Sunday review form even if done this week
-  reviewMonk: null,   // pending monk-mode pick in the review form
   debtEdit: null,     // person name being edited, "__new__" for the add form, or null
   debtStatusPick: null, // pending status base in the debt form (Pending/Expected/Partial/Paid)
   taskEdit: null,     // absolute line index of the task being edited inline, or null
@@ -761,15 +760,6 @@ function removeDebt(name) {
   applyDebtsChange(lines.join("\n"));
 }
 
-/* Monday (ISO) of the week containing date d, as YYYY-MM-DD */
-function mondayOf(d) {
-  const x = new Date(d);
-  const day = (x.getDay() + 6) % 7; // 0 = Monday
-  x.setDate(x.getDate() - day);
-  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
-}
-const weekOfMonday = () => mondayOf(new Date());
-
 function savingsText() {
   const s = state.files.savings;
   return s ? (typeof s === "string" ? s : s.text) : "";
@@ -792,29 +782,25 @@ function setGoalField(lines, key, value) {
   }
 }
 
-/* Save a weekly review: append a dated Review Log entry, then (optionally)
+/* Save a balance update: append a dated Balance Log entry, then (optionally)
    update Current savings, Remaining to goal, and the current month's tracker row */
-function saveReview(v) {
+function saveBalance(v) {
   if (state.busy) return;
   const lines = savingsText().split("\n");
   const s = buildModel().savings;
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10);
-  const dow = now.toLocaleDateString("en-US", { weekday: "short" });
 
-  /* 1) Review Log entry (newest first) */
+  /* 1) Balance Log entry (newest first) */
   const entry = [
-    `### ${dateStr} (${dow})`,
+    `### ${dateStr}`,
     `- Balance: ${v.balance != null ? fmtNum(v.balance) + " MAD" : "—"}`,
-    `- Spent this week: ${v.spent != null ? fmtNum(v.spent) + " MAD" : "—"}`,
-    `- Discretionary: ${v.disc != null ? fmtNum(v.disc) + " MAD" : "—"}`,
-    `- Monk mode: ${v.monk || "—"}`,
     `- Notes: ${v.notes || "—"}`,
     "",
   ];
-  let logIdx = lines.findIndex((l) => /^##\s+review log/i.test(l.trim()));
+  let logIdx = lines.findIndex((l) => /^##\s+balance log/i.test(l.trim()));
   if (logIdx === -1) {
-    lines.push("", "## Review Log", "");
+    lines.push("", "## Balance Log", "");
     logIdx = lines.length - 2;
   }
   /* skip the heading + any intro prose/blank, insert before the first existing entry */
@@ -849,13 +835,12 @@ function saveReview(v) {
       }
       if (curIdx != null) {
         const saved = v.balance - baseline;
-        const cells = lines[curIdx].split("|"); // ["", " Jun 2026 ", salary, exp, saved, total, rate, ontrack, ""]
+        const cells = lines[curIdx].split("|"); // ["", " Jun 2026 ", salary, exp, saved, total, rate, ""]
         const salary = num(cells[2]);
         cells[1] = ` ${mShort} ${yr} `;
         cells[4] = ` ${fmtNum(saved)} `;
         cells[5] = ` ${fmtNum(v.balance)} `;
         cells[6] = ` ${salary ? Math.round((saved / salary) * 100) + "%" : "—"} `;
-        cells[7] = ` ${saved >= (s.monthlyFloor || 0) ? "✓" : "✗"} `;
         lines[curIdx] = cells.join("|");
       }
     }
@@ -1049,26 +1034,13 @@ function buildModel() {
       if (vals.length >= 2) kv[vals[0].replace(/\*/g, "")] = vals[1].replace(/\*/g, "");
     });
 
-    /* monthly target range — the "Savings out (first)" rows in the budget section
-       (floor = low-salary month, stretch = high-salary month) */
-    const budget = section(fSavings, "## Monk Mode Monthly Budget");
-    const outs = (budget.match(/savings out[^|]*\|\s*\**\s*([\d,]+)/gi) || [])
-      .map((x) => num(x)).filter((n) => n);
-    const monthlyFloor = outs.length ? Math.min(...outs) : (num(kv["Strict mode monthly target"]) || 5500);
-    const monthlyStretch = outs.length ? Math.max(...outs) : monthlyFloor;
-
     m.savings = {
       target: num(kv["Target"]) || 50000,
       current: num(kv["Current savings"]),
       currentRaw: kv["Current savings"] || "",
       planStart: num(kv["Plan start"]),
-      monthly: monthlyStretch,
-      monthlyFloor,
-      monthlyStretch,
-      discCeiling: 383,
       deadline: kv["Deadline"] || "",
       remaining: num(kv["Remaining to goal"]),
-      spending: num(kv["Spending account"]),
       paymentsLeft: num(kv["Salary payments left"]),
       salaryDay: num(kv["Salary day"]) || 28,
       tracker: parseTable(section(fSavings, "## Progress Tracker")),
@@ -1088,8 +1060,8 @@ function buildModel() {
     m.savings.monthSalary = num(salaryCell) || 0;
     m.savings.rate = m.savings.monthSalary > 0 ? (m.savings.monthSaved / m.savings.monthSalary) * 100 : null;
 
-    /* Review Log — parse "### <date>" entries with their `- Key: value` fields */
-    const logBody = section(fSavings, "## Review Log");
+    /* Balance Log — parse "### <date>" entries with their `- Key: value` fields */
+    const logBody = section(fSavings, "## Balance Log");
     const entries = [];
     let cur = null;
     logBody.split("\n").forEach((ln) => {
@@ -1102,9 +1074,9 @@ function buildModel() {
       const fm = ln.trim().match(/^[-*]\s*([^:]+):\s*(.*)$/);
       if (cur && fm) cur.fields[fm[1].trim().toLowerCase()] = fm[2].trim();
     });
-    const thisMon = weekOfMonday();
-    const thisWeek = entries.find((e) => !isNaN(e.date) && mondayOf(e.date) === thisMon);
-    m.review = { entries, thisWeek, thisMon };
+    const thisMonth = entries.find((e) =>
+      !isNaN(e.date) && e.date.getMonth() === now.getMonth() && e.date.getFullYear() === now.getFullYear());
+    m.review = { entries, thisMonth };
   }
 
   if (f.debts) {
@@ -1969,111 +1941,82 @@ function daysUntilSalary(day) {
   return Math.round((next - today) / 86400000);
 }
 
-/* monthly savings-rate band, per the monk-mode article */
-function rateBand(rate) {
-  if (rate === null) return ["dim", "—"];
-  if (rate >= 65) return ["ok", "Deep monk mode"];
-  if (rate >= 55) return ["ok", "Monk mode"];
-  if (rate >= 40) return ["warn", "Slipping"];
-  return ["bad", "Off monk mode"];
-}
-
 function renderMoney(m) {
   const s = m.savings;
   const pct = s.current && s.target ? Math.min(100, (s.current / s.target) * 100) : 0;
   const nowM = new Date().toLocaleDateString("en-US", { month: "short" });
   const nowY = String(new Date().getFullYear());
-  const floor = s.monthlyFloor || s.monthly || 4883;
-  const stretch = s.monthlyStretch || s.monthly || 5500;
   const remaining = s.remaining !== null && s.remaining !== undefined
     ? s.remaining
     : Math.max(0, (s.target || 0) - (s.current || 0));
-  const dueThisMonth = Math.max(0, floor - (s.monthSaved || 0));
 
-  /* milestone markers on the goal bar */
-  const milestones = [20000, 35000, 50000].filter((v) => v < (s.target || 50000) || v === 50000);
+  /* milestone markers on the goal bar — ~35% / ~70% / 100% of the target, rounded */
+  const target = s.target || 70000;
+  const round5k = (n) => Math.round(n / 5000) * 5000;
+  const milestones = [...new Set([round5k(target * 0.35), round5k(target * 0.7), target])].filter((v) => v > 0);
   const markers = milestones.map((v) => {
-    const left = Math.min(100, (v / (s.target || 50000)) * 100);
+    const left = Math.min(100, (v / target) * 100);
     const hit = (s.current || 0) >= v;
     return `<span class="ms-mark ${hit ? "hit" : ""}" style="left:${left}%" title="${v.toLocaleString()} MAD"></span>`;
   }).join("");
 
   /* ---- this month ---- */
   const salaryDays = daysUntilSalary(s.salaryDay || 28);
-  const [bandCls, bandLabel] = rateBand(s.rate ?? null);
+  const rateChip = s.rate === null || s.rate === undefined ? ""
+    : `<span class="chip ${s.rate >= 50 ? "ok" : s.rate >= 30 ? "warn" : "bad"}">${s.rate.toFixed(0)}%</span>`;
   const monthCard = `
   <div class="card">
     <h2>This Month <span class="h-extra muted">${nowM} ${nowY}</span></h2>
     <div class="month-grid">
       <div class="mg-cell">
         <div class="mg-val">${salaryDays === 0 ? "Today" : `${salaryDays}d`}</div>
-        <div class="mg-lbl">next salary (${s.salaryDay || 28}th) — transfer first</div>
-      </div>
-      <div class="mg-cell">
-        <div class="mg-val">${floor.toLocaleString()}<span class="mg-arrow">→</span>${stretch.toLocaleString()}</div>
-        <div class="mg-lbl">monthly target (floor → stretch)</div>
+        <div class="mg-lbl">next salary (${s.salaryDay || 28}th)</div>
       </div>
     </div>
     ${s.monthSaved > 0
       ? `<div class="month-saved">
            <div class="ms-row"><span>Saved this month</span><b>${s.monthSaved.toLocaleString()} MAD</b></div>
-           ${s.rate !== null ? `<div class="ms-row"><span>Savings rate</span><span class="chip ${bandCls}">${s.rate.toFixed(0)}% · ${bandLabel}</span></div>` : ""}
+           ${rateChip ? `<div class="ms-row"><span>Savings rate</span>${rateChip}</div>` : ""}
          </div>`
-      : `<div class="bar-sub" style="margin-top:10px"><span>Not logged yet this month</span><span>${dueThisMonth.toLocaleString()} MAD to floor</span></div>`}
+      : `<div class="bar-sub" style="margin-top:10px"><span>Not logged yet this month</span></div>`}
   </div>`;
 
-  /* ---- Sunday review (form + history) ---- */
-  let reviewCard = "";
+  /* ---- balance update (form + latest entry) ---- */
+  let balanceCard = "";
   if (m.review) {
     const r = m.review;
-    const isSunday = new Date().getDay() === 0;
-    const done = r.thisWeek && !state.reviewEdit;
+    const done = r.thisMonth && !state.reviewEdit;
     const dis = state.busy ? "disabled" : "";
-    const badge = done
-      ? `<span class="chip ok">done ✓</span>`
-      : `<span class="chip ${isSunday ? "warn" : "info"}">${isSunday ? "due today" : "due this week"}</span>`;
 
     if (done) {
-      const f = r.thisWeek.fields;
-      reviewCard = `
+      const f = r.thisMonth.fields;
+      balanceCard = `
       <div class="card">
-        <h2>Sunday Review ${badge}</h2>
-        <p class="muted review-note">Reviewed ${esc(r.thisWeek.dateRaw)}.</p>
+        <h2>Balance <span class="chip ok">logged ✓</span></h2>
+        <p class="muted review-note">Last updated ${esc(r.thisMonth.dateRaw)}.</p>
         <div class="month-saved">
           ${f.balance ? `<div class="ms-row"><span>Balance</span><b>${esc(f.balance)}</b></div>` : ""}
-          ${f["spent this week"] ? `<div class="ms-row"><span>Spent this week</span><span>${esc(f["spent this week"])}</span></div>` : ""}
-          ${f.discretionary ? `<div class="ms-row"><span>Discretionary</span><span>${esc(f.discretionary)}</span></div>` : ""}
-          ${f["monk mode"] ? `<div class="ms-row"><span>Monk mode</span><span>${esc(f["monk mode"])}</span></div>` : ""}
+          ${f.notes && f.notes !== "—" ? `<div class="ms-row"><span>Notes</span><span>${esc(f.notes)}</span></div>` : ""}
         </div>
-        <button class="show-toggle" id="btn-review-again" ${dis}>Review again</button>
+        <button class="show-toggle" id="btn-review-again" ${dis}>Update again</button>
       </div>`;
     } else {
-      const monkOpts = ["Yes", "Mostly", "No"];
-      const pick = state.reviewMonk;
-      reviewCard = `
+      balanceCard = `
       <div class="card">
-        <h2>Sunday Review ${badge}</h2>
-        <p class="muted review-note">Fill this in, tap Save — it logs a dated entry and updates your savings + tracker.</p>
+        <h2>Update Balance</h2>
+        <p class="muted review-note">Log your current savings balance — updates the goal + tracker.</p>
         <label class="rv-label">Savings account balance (MAD)</label>
         <input type="number" inputmode="decimal" id="rv-balance" placeholder="${s.current ? fmtNum(s.current) : "0"}" value="">
-        <label class="rv-label">Total spent this week (MAD)</label>
-        <input type="number" inputmode="decimal" id="rv-spent" placeholder="0">
-        <label class="rv-label">Discretionary this week (MAD) <span class="muted">· ceiling ${s.discCeiling || 383}</span></label>
-        <input type="number" inputmode="decimal" id="rv-disc" placeholder="0">
-        <label class="rv-label">In monk mode this week?</label>
-        <div class="seg rv-seg">
-          ${monkOpts.map((o) => `<button type="button" data-monk="${o}" class="${pick === o ? "active" : ""}">${o}</button>`).join("")}
-        </div>
-        <label class="rv-label">Notes / near-misses <span class="muted">· optional</span></label>
+        <label class="rv-label">Notes <span class="muted">· optional</span></label>
         <input type="text" id="rv-notes" placeholder="Anything worth remembering…">
         <div style="height:12px"></div>
-        <button class="btn" id="btn-review-save" ${dis}>Save review</button>
-        ${r.thisWeek ? `<button class="show-toggle" id="btn-review-cancel">Cancel</button>` : ""}
+        <button class="btn" id="btn-review-save" ${dis}>Save balance</button>
+        ${r.thisMonth ? `<button class="show-toggle" id="btn-review-cancel">Cancel</button>` : ""}
       </div>`;
     }
   }
 
-  /* ---- monthly tracker (compact, projections behind a toggle) ---- */
+  /* ---- monthly tracker (compact, future months behind a toggle) ---- */
   const trackerRows = (s.tracker || []).map((r) => {
     const vals = Object.values(r).map((v) => v.replace(/\*/g, ""));
     const month = vals[0] || "";
@@ -2082,14 +2025,12 @@ function renderMoney(m) {
     const isCurrent = month.includes(nowM) && month.includes(nowY);
     const isActual = saved !== null;
     const isProj = !isActual && !isCurrent;
-    const onTrack = /✓|yes/i.test(vals[6] || "");
-    const offTrack = /✗|no/i.test(vals[6] || "");
-    const barPct = saved !== null ? Math.min(100, Math.round((saved / stretch) * 100)) : 0;
+    const barPct = total !== null ? Math.min(100, Math.round((total / target) * 100)) : 0;
     const pill = isCurrent && !isActual
       ? `<span class="tr-now">now</span>`
       : isActual
-        ? (onTrack ? `<span class="chip ok pill-xs">✓</span>` : offTrack ? `<span class="chip bad pill-xs">✗</span>` : "")
-        : `<span class="muted pill-xs">projected</span>`;
+        ? `<span class="muted pill-xs">${total !== null ? Math.round((total / target) * 100) + "%" : ""}</span>`
+        : `<span class="muted pill-xs">—</span>`;
     const sub = isActual
       ? `${saved.toLocaleString()} MAD saved${total !== null ? ` · ${total.toLocaleString()} total` : ""}`
       : isCurrent ? "in progress" : "—";
@@ -2107,7 +2048,7 @@ function renderMoney(m) {
     const visible = trackerRows.filter((r) => !r.isProj);
     const proj = trackerRows.filter((r) => r.isProj);
     const toggleBtn = proj.length
-      ? `<button class="show-toggle" id="btn-tracker-toggle">${state.trackerExpanded ? "Show less" : `+ ${proj.length} projected month${proj.length === 1 ? "" : "s"}`}</button>`
+      ? `<button class="show-toggle" id="btn-tracker-toggle">${state.trackerExpanded ? "Show less" : `+ ${proj.length} more month${proj.length === 1 ? "" : "s"}`}</button>`
       : "";
     return `<div class="card">
       <h2>Monthly Tracker</h2>
@@ -2117,7 +2058,7 @@ function renderMoney(m) {
     </div>`;
   })() : "";
 
-  /* ---- windfall insurance (debts) — add / edit / mark-paid / remove ---- */
+  /* ---- debts owed to Mehdi — add / edit / mark-paid / remove ---- */
   const dbusy = state.busy ? "disabled" : "";
   let debtBody;
   if (state.debtEdit) {
@@ -2156,16 +2097,16 @@ function renderMoney(m) {
   }
   const debtCard = `
   <div class="card">
-    <h2>Windfall Insurance ${m.debtTotal ? `<span class="h-extra">${m.debtTotal.toLocaleString()} MAD</span>` : ""}</h2>
-    <p class="muted review-note">Debts owed to you — insurance for the goal, not spending money. ${m.debtTotal && remaining ? `Covers ${Math.min(100, Math.round((m.debtTotal / remaining) * 100))}% of the gap to 50K.` : ""}</p>
+    <h2>Debts Owed to You ${m.debtTotal ? `<span class="h-extra">${m.debtTotal.toLocaleString()} MAD</span>` : ""}</h2>
+    <p class="muted review-note">Not spending money — counts toward the goal when repaid.${m.debtTotal && remaining ? ` Covers ${Math.min(100, Math.round((m.debtTotal / remaining) * 100))}% of the gap to ${target.toLocaleString()}.` : ""}</p>
     ${debtBody}
   </div>`;
 
   return `
-  <div class="card monk-goal">
-    <div class="monk-head">
-      <span class="monk-tag">⚡ MONK MODE</span>
-      <span class="monk-sub">${s.paymentsLeft ? `${s.paymentsLeft} salaries left` : ""}${s.deadline ? ` · ${esc(s.deadline.split("(")[0].trim())}` : ""}</span>
+  <div class="card goal-card">
+    <div class="goal-head">
+      <span class="goal-tag">🎯 GOAL</span>
+      <span class="goal-sub">${s.paymentsLeft ? `${s.paymentsLeft} salaries left` : ""}${s.deadline ? ` · ${esc(s.deadline.split("(")[0].trim())}` : ""}</span>
     </div>
     <div class="big-number">${s.current ? s.current.toLocaleString() : "—"} <small>/ ${s.target ? s.target.toLocaleString() : "—"} MAD</small></div>
     <div class="bar ms-bar"><div style="width:${pct}%"></div>${markers}</div>
@@ -2173,16 +2114,9 @@ function renderMoney(m) {
   </div>
 
   ${monthCard}
-  ${reviewCard}
+  ${balanceCard}
   ${trackerCard}
-  ${debtCard}
-
-  <div class="card locked">
-    <h2>Emergency Fund</h2>
-    <div class="row"><div class="r-main"><div class="r-title">9,450 MAD</div>
-    <div class="r-sub">The wall — ring-fenced, not available money</div></div>
-    <div class="r-end"><span class="chip dim">🔒 locked</span></div></div>
-  </div>`;
+  ${debtCard}`;
 }
 
 function renderHabits(m) {
@@ -2461,25 +2395,15 @@ function render() {
     const tt = $("#btn-tracker-toggle");
     if (tt) tt.onclick = () => { state.trackerExpanded = !state.trackerExpanded; render(); };
 
-    /* monk-mode segmented pick — toggle locally, no full re-render (keeps inputs) */
-    document.querySelectorAll("[data-monk]").forEach((b) => {
-      b.onclick = () => {
-        state.reviewMonk = b.dataset.monk;
-        document.querySelectorAll("[data-monk]").forEach((x) => x.classList.toggle("active", x === b));
-      };
-    });
     const againBtn = $("#btn-review-again");
-    if (againBtn) againBtn.onclick = () => { state.reviewEdit = true; state.reviewMonk = null; render(); };
+    if (againBtn) againBtn.onclick = () => { state.reviewEdit = true; render(); };
     const cancelBtn = $("#btn-review-cancel");
-    if (cancelBtn) cancelBtn.onclick = () => { state.reviewEdit = false; state.reviewMonk = null; render(); };
+    if (cancelBtn) cancelBtn.onclick = () => { state.reviewEdit = false; render(); };
     const saveBtn = $("#btn-review-save");
     if (saveBtn) saveBtn.onclick = () => {
       const valOf = (id) => { const el = $(id); const n = el && el.value.trim() !== "" ? num(el.value) : null; return n; };
-      saveReview({
+      saveBalance({
         balance: valOf("#rv-balance"),
-        spent: valOf("#rv-spent"),
-        disc: valOf("#rv-disc"),
-        monk: state.reviewMonk,
         notes: ($("#rv-notes")?.value || "").trim(),
       });
     };

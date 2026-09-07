@@ -559,18 +559,18 @@ button.duo-tile:active { background: var(--surface2); }
   vertical-align: 1px;
 }
 .right { text-align: right; }
-/* ---------- finances — monk mode ---------- */
+/* ---------- finances — savings goal ---------- */
 
-.monk-goal { border-color: var(--accent); }
-.monk-head {
+.goal-card { border-color: var(--accent); }
+.goal-head {
   display: flex; justify-content: space-between; align-items: baseline;
   gap: 8px; margin-bottom: 10px;
 }
-.monk-tag {
+.goal-tag {
   font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em;
   color: var(--accent);
 }
-.monk-sub { font-size: 0.72rem; color: var(--muted); text-align: right; }
+.goal-sub { font-size: 0.72rem; color: var(--muted); text-align: right; }
 
 /* milestone markers on the goal bar */
 .ms-bar { position: relative; overflow: visible; }
@@ -587,7 +587,6 @@ button.duo-tile:active { background: var(--surface2); }
   border-radius: 10px; padding: 11px 12px;
 }
 .mg-val { font-size: 1.15rem; font-weight: 750; font-variant-numeric: tabular-nums; }
-.mg-arrow { color: var(--muted); margin: 0 4px; font-weight: 500; }
 .mg-lbl { font-size: 0.68rem; color: var(--muted); margin-top: 3px; line-height: 1.3; }
 .month-saved { margin-top: 12px; display: flex; flex-direction: column; gap: 7px; }
 .ms-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; }
@@ -658,7 +657,6 @@ button.duo-tile:active { background: var(--surface2); }
 .debt-edit-ic { margin-left: 8px; opacity: 0.45; font-size: 0.85rem; }
 
 .muted { color: var(--muted); }
-.locked { opacity: 0.8; }
 a.tel { color: var(--blue); text-decoration: none; }
 
 /* ---------- habits — edit mode + add form ---------- */
