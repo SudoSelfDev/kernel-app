@@ -215,12 +215,11 @@ body.bars-hidden #tabbar {
   background: var(--surface2); border: 1px solid var(--border); border-radius: 10px;
   padding: 8px 4px; cursor: pointer; font-family: inherit; color: var(--text);
 }
-.tr-day.work { border-color: var(--muted); }
 .tr-day:active { background: var(--surface); }
 .tr-day[disabled] { opacity: 0.5; }
 .trd-dow { font-size: 0.72rem; font-weight: 700; }
 .trd-mark { font-size: 0.72rem; padding: 1px 6px; }
-.trd-shift { font-size: 0.62rem; color: var(--muted); white-space: nowrap; }
+.trd-num { font-size: 0.62rem; color: var(--muted); }
 .task[disabled] { opacity: 0.5; }
 
 /* floating add button — sits above the tab bar, hides with it */
