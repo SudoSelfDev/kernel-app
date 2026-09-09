@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v44";
+const APP_VERSION = "v45";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -107,6 +107,61 @@ const SAVE_DELAY = 2000;
 const HABIT_RING_R = 34;
 const HABIT_RING_C = 2 * Math.PI * HABIT_RING_R;
 const habitRingOffset = (done, total) => (total ? HABIT_RING_C * (1 - done / total) : HABIT_RING_C);
+
+/* ---------- page + tap animations ---------- */
+
+/* left-to-right order of the tab bar — lets a view swap pick a slide
+   direction, like flipping through pages rather than just cutting */
+const TAB_ORDER = ["today", "habits", "money", "articles", "indrive"];
+let _lastViewKey = null;
+
+/* #view's whole innerHTML is replaced on every render (no virtual-DOM diff),
+   so a plain CSS transition has nothing to interpolate from — same reason
+   the habit ring/checkbox needed the Web Animations API instead of CSS.
+   Called once per actual page change (render() tracks _lastViewKey so this
+   is a no-op on routine re-renders like ticking a task). */
+function animateViewChange(fromKey, toKey) {
+  const el = $("#view");
+  if (!el || fromKey === null || fromKey === toKey) return;
+  const inTabs = (k) => TAB_ORDER.includes(k);
+  const EASE = "cubic-bezier(.22,1,.36,1)";
+  let frames;
+  if (inTabs(fromKey) && inTabs(toKey)) {
+    /* tab-to-tab: slide in from whichever side that tab lives on */
+    const dir = TAB_ORDER.indexOf(toKey) > TAB_ORDER.indexOf(fromKey) ? 1 : -1;
+    frames = [
+      { opacity: 0, transform: `translate3d(${dir * 26}px, 0, 0) scale(0.98)` },
+      { opacity: 1, transform: "translate3d(0, 0, 0) scale(1)" },
+    ];
+  } else if (inTabs(fromKey) && !inTabs(toKey)) {
+    /* drilling into a subview (article, study doc, settings) — rises in */
+    frames = [
+      { opacity: 0, transform: "translate3d(0, 18px, 0) scale(0.97)" },
+      { opacity: 1, transform: "translate3d(0, 0, 0) scale(1)" },
+    ];
+  } else if (!inTabs(fromKey) && inTabs(toKey)) {
+    /* backing out of a subview to a tab — settles back down */
+    frames = [{ opacity: 0, transform: "scale(1.02)" }, { opacity: 1, transform: "scale(1)" }];
+  } else {
+    frames = [{ opacity: 0, transform: "scale(0.98)" }, { opacity: 1, transform: "scale(1)" }];
+  }
+  el.animate(frames, { duration: 320, easing: EASE });
+}
+
+/* a satisfying squash-and-bounce tap, used on the tab bar + logo */
+function bounceIcon(el) {
+  if (!el) return;
+  el.animate(
+    [
+      { transform: "scale(1)" },
+      { transform: "scale(0.72)" },
+      { transform: "scale(1.18)" },
+      { transform: "scale(0.94)" },
+      { transform: "scale(1)" },
+    ],
+    { duration: 420, easing: "cubic-bezier(.34,1.56,.64,1)" },
+  );
+}
 
 /* ---------- icons (feather-style, stroke = currentColor) ---------- */
 
@@ -2279,6 +2334,10 @@ function render() {
   $("#view").innerHTML = html;
   $("#view").dataset.tab = state.studyDoc ? "study" : v;
 
+  const viewKey = state.studyDoc ? "study" : state.article ? `article:${state.article}` : v;
+  animateViewChange(_lastViewKey, viewKey);
+  _lastViewKey = viewKey;
+
   if (state.studyDoc) {
     const close = () => { state.studyDoc = false; showBars(); render(); scrollTo(0, 0); };
     const sb = $("#btn-study-back"); if (sb) sb.onclick = close;
@@ -2620,11 +2679,18 @@ function goToTab(view) {
 
 document.querySelectorAll(".tab").forEach((b) => {
   b.querySelector(".ticon").innerHTML = icon(b.dataset.icon);
-  b.onclick = () => goToTab(b.dataset.view);
+  b.onclick = () => {
+    bounceIcon(b.querySelector(".ticon"));
+    goToTab(b.dataset.view);
+  };
 });
-$("#btn-home").onclick = () => goToTab("today");
+$("#btn-home").onclick = () => {
+  bounceIcon($("#btn-home"));
+  goToTab("today");
+};
 $("#btn-settings").innerHTML = icon("gear", 17);
 $("#btn-settings").onclick = () => {
+  bounceIcon($("#btn-settings"));
   state.view = "settings";
   state.article = null;
   state.studyDoc = false;

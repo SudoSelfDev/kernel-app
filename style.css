@@ -61,6 +61,7 @@ html, body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden; /* the page-change slide briefly translates #view past the edge */
 }
 
 #topbar {
