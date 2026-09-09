@@ -337,7 +337,7 @@ input::placeholder { color: var(--muted); }
 
 .hero { padding: 6px 2px 0; }
 .hero-date {
-  font-size: 1.55rem; font-weight: 800; line-height: 1.1;
+  font-size: 1.75rem; font-weight: 800; line-height: 1.3; padding-bottom: 4px;
   background: linear-gradient(90deg, var(--hue-today), var(--hue-indrive));
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }

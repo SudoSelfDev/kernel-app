@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v41";
+const APP_VERSION = "v42";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
