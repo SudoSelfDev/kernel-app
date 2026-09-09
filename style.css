@@ -361,6 +361,7 @@ button.duo-tile:active { background: var(--surface2); }
 .duo-val.t-bad { color: var(--red); }
 .duo-val.t-warn { color: var(--amber); }
 .duo-val.t-ok { color: var(--accent); }
+.duo-val.t-indrive { color: var(--hue-indrive); }
 .duo-sub { font-size: 0.72rem; color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- clients — cards + detail sheet ---------- */

@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v42";
+const APP_VERSION = "v43";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -1553,8 +1553,6 @@ function removeIndriveEntry(date) {
 }
 
 function renderToday(m) {
-  const renewals = [...m.active].filter((c) => c.days !== null).sort((a, b) => a.days - b.days);
-  const next = renewals[0];
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
   const dis = state.busy ? "disabled" : "";
 
@@ -1579,9 +1577,6 @@ function renderToday(m) {
               <button class="task-icon-btn" data-edit-line="${t.line}" title="Edit task" aria-label="Edit task" ${dis}>${icon("pencil", 15)}</button>
               <button class="task-icon-btn del" data-del-line="${t.line}" title="Remove task" aria-label="Remove task" ${dis}>${icon("x", 15)}</button>
             </div>`).join("")}`;
-
-
-  const nextTone = !next ? "dim" : next.days <= 7 ? "bad" : next.days <= 30 ? "warn" : "ok";
 
   /* ---- office transport (log-driven booking window, no calendar) ---- */
   const tp = transportPlan(m);
@@ -1683,11 +1678,11 @@ function renderToday(m) {
       <div class="duo-val">${m.study.done}/${m.study.total}</div>
       <div class="duo-sub">${esc(m.study.title)} · ${m.study.total ? Math.round((m.study.done / m.study.total) * 100) : 0}%</div>
     </button>` : ""}
-    <div class="card duo-tile">
-      <h2>Next renewal</h2>
-      <div class="duo-val t-${nextTone}">${next ? (next.days < 0 ? `${-next.days}d ago` : `${next.days}d`) : "—"}</div>
-      <div class="duo-sub">${next ? `${esc((next.Name || "").split(" ").pop())} · ${esc(next.Expiry || "")}` : "no expiry dates"}</div>
-    </div>
+    <button class="card duo-tile" id="btn-indrive-open" title="Open inDrive">
+      <h2>inDrive net ${icon("chevronRight", 13)}</h2>
+      <div class="duo-val ${m.indrive && m.indrive.totalNet > 0 ? "t-indrive" : ""}">${m.indrive ? Math.round(m.indrive.totalNet).toLocaleString() : "—"}</div>
+      <div class="duo-sub">${m.indrive && m.indrive.rows.length ? `${m.indrive.rows.length} day${m.indrive.rows.length === 1 ? "" : "s"} logged · MAD` : "no entries yet"}</div>
+    </button>
   </div>`;
 }
 
@@ -2313,6 +2308,8 @@ function render() {
     });
     const studyOpen = $("#btn-study-open");
     if (studyOpen) studyOpen.onclick = () => { state.studyDoc = true; showBars(); render(); scrollTo(0, 0); };
+    const indriveOpen = $("#btn-indrive-open");
+    if (indriveOpen) indriveOpen.onclick = () => goToTab("indrive");
 
     const tpl = transportPlan(m);
     if (tpl) {
@@ -2606,21 +2603,24 @@ function closeHabitModal() {
 
 /* ---------- boot ---------- */
 
+/* switch tabs from anywhere (tab bar, or a shortcut tile like the inDrive stat) */
+function goToTab(view) {
+  state.view = view;
+  state.article = null;
+  state.articleReturn = null;
+  state.habitsEdit = false;
+  state.taskEdit = null;
+  state.studyDoc = false;
+  state.indriveForm = false;
+  state.indriveEditDate = null;
+  showBars();
+  render();
+  scrollTo(0, 0);
+}
+
 document.querySelectorAll(".tab").forEach((b) => {
   b.querySelector(".ticon").innerHTML = icon(b.dataset.icon);
-  b.onclick = () => {
-    state.view = b.dataset.view;
-    state.article = null;
-    state.articleReturn = null;
-    state.habitsEdit = false;
-    state.taskEdit = null;
-    state.studyDoc = false;
-    state.indriveForm = false;
-    state.indriveEditDate = null;
-    showBars();
-    render();
-    scrollTo(0, 0);
-  };
+  b.onclick = () => goToTab(b.dataset.view);
 });
 $("#btn-settings").innerHTML = icon("gear", 17);
 $("#btn-settings").onclick = () => {
