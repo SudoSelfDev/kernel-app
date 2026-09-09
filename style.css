@@ -75,10 +75,12 @@ html, body {
 }
 body.bars-hidden #topbar { transform: translateY(-110%); opacity: 0; }
 .brand {
-  font-weight: 700; font-size: 1.05rem; letter-spacing: 0.02em;
+  font-weight: 700; font-size: 1.2rem; letter-spacing: 0.02em; line-height: 1.3;
   background: linear-gradient(90deg, var(--hue-today), var(--hue-indrive));
   -webkit-background-clip: text; background-clip: text; color: transparent;
+  border: none; padding: 0; margin: 0; cursor: pointer; font-family: inherit;
 }
+.brand:active { opacity: 0.75; }
 .sync-status { flex: 1; font-size: 0.78rem; font-weight: 600; color: var(--muted); text-align: right; }
 .icon-btn {
   background: var(--surface); color: var(--text);
@@ -122,11 +124,11 @@ body.bars-hidden #tabbar {
 .tab .ticon { height: 20px; display: flex; align-items: center; justify-content: center; }
 .tab .ticon svg { display: block; }
 .tab.active { color: var(--accent); }
-.tab[data-view="today"].active    { color: var(--hue-today); }
-.tab[data-view="habits"].active   { color: var(--hue-habits); }
-.tab[data-view="money"].active    { color: var(--hue-money); }
-.tab[data-view="articles"].active { color: var(--hue-read); }
-.tab[data-view="indrive"].active  { color: var(--hue-indrive); }
+.tab[data-view="today"].active    { color: var(--hue-today);   filter: drop-shadow(0 3px 6px var(--hue-today)); }
+.tab[data-view="habits"].active   { color: var(--hue-habits);  filter: drop-shadow(0 3px 6px var(--hue-habits)); }
+.tab[data-view="money"].active    { color: var(--hue-money);   filter: drop-shadow(0 3px 6px var(--hue-money)); }
+.tab[data-view="articles"].active { color: var(--hue-read);    filter: drop-shadow(0 3px 6px var(--hue-read)); }
+.tab[data-view="indrive"].active  { color: var(--hue-indrive); filter: drop-shadow(0 3px 6px var(--hue-indrive)); }
 .tab:active { background: var(--surface2); }
 
 .card {

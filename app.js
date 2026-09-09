@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v43";
+const APP_VERSION = "v44";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -2622,6 +2622,7 @@ document.querySelectorAll(".tab").forEach((b) => {
   b.querySelector(".ticon").innerHTML = icon(b.dataset.icon);
   b.onclick = () => goToTab(b.dataset.view);
 });
+$("#btn-home").onclick = () => goToTab("today");
 $("#btn-settings").innerHTML = icon("gear", 17);
 $("#btn-settings").onclick = () => {
   state.view = "settings";
