@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v45";
+const APP_VERSION = "v46";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -19,7 +19,6 @@ const PATHS = {
   studyplan: atob("MTBfUHJvamVjdHMvQ2xvdWRfRW5naW5lZXJpbmcvY2xvdWQtc3R1ZHktcGxhbi5tZA=="),
   transport: atob("MjBfTGlmZWxvZy90cmFuc3BvcnQtbG9nLm1k"),
   dailyDir: atob("MjBfTGlmZWxvZy8yMV9EYWlseU5vdGVzLw=="),
-  research: atob("MzBfTGlicmFyeS9SZXNlYXJjaA=="),
   masterplan: atob("MTBfUHJvamVjdHMvRGFyU3RyZWFtL21hc3Rlci1wbGFuLm1k"),
   habits: atob("MjBfTGlmZWxvZy9IYWJpdExvZy5tZA=="),
   indrive: atob("MTBfUHJvamVjdHMvSW5Ecml2ZS9pbmRyaXZlLWluY29tZS5tZA=="),
@@ -289,15 +288,18 @@ async function fetchRaw(path, { optional = false } = {}) {
   return res.text();
 }
 
-/* directory listing — array of {name, type, ...} */
-async function fetchDir(path, { optional = false } = {}) {
-  const res = await fetch(`${contentsUrl(path)}?ref=${BRANCH}`, {
-    headers: { ...ghHeaders(), Accept: "application/vnd.github+json" },
-  });
-  if (res.status === 404 && optional) return null;
+/* whole-repo file tree in one call (Git Trees API) — used to find every
+   #Research-tagged article regardless of which folder it lives in, without
+   a fetchDir round trip per subfolder */
+async function fetchTree() {
+  const res = await fetch(
+    `https://api.github.com/repos/${OWNER}/${REPO}/git/trees/${BRANCH}?recursive=1`,
+    { headers: { ...ghHeaders(), Accept: "application/vnd.github+json" } },
+  );
   if (res.status === 401 || res.status === 403) throw new Error("auth");
   if (!res.ok) throw new Error(`fetch ${res.status}`);
-  return res.json();
+  const j = await res.json();
+  return Array.isArray(j.tree) ? j.tree : [];
 }
 
 /* JSON variant — returns {text, sha} so we can write the file back */
@@ -349,25 +351,30 @@ async function syncAll() {
   setSyncStatus("Syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, study, studyplan, daily, researchDir, masterplan, habits, transport, indrive] = await Promise.all([
+    const [clients, savings, debts, study, studyplan, daily, tree, masterplan, habits, transport, indrive] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
       fetchRaw(PATHS.study, { optional: true }),
       fetchRaw(PATHS.studyplan, { optional: true }),
       fetchWithSha(todayNotePath(), { optional: true }),
-      fetchDir(PATHS.research, { optional: true }),
+      fetchTree().catch(() => []),
       fetchRaw(PATHS.masterplan, { optional: true }),
       fetchWithSha(PATHS.habits, { optional: true }),
       fetchRaw(PATHS.transport, { optional: true }),
       fetchRaw(PATHS.indrive, { optional: true }),
     ]);
+    /* #Research articles can live anywhere under Projects/Library/top-level
+       Lifelog now — fetch every candidate and keep only the tagged ones */
     let articles = [];
-    if (Array.isArray(researchDir)) {
-      const mds = researchDir.filter((f) => f.type === "file" && f.name.endsWith(".md"));
-      const texts = await Promise.all(mds.map((f) => fetchRaw(`${PATHS.research}/${f.name}`)));
-      articles = mds.map((f, i) => ({ name: f.name, text: texts[i] }));
-    }
+    const candidates = tree.filter((t) => t.type === "blob" && isResearchCandidate(t.path));
+    const texts = await Promise.all(candidates.map((f) => fetchRaw(f.path, { optional: true })));
+    candidates.forEach((f, i) => {
+      const text = texts[i];
+      if (text && hasResearchTag(text)) {
+        articles.push({ name: f.path.split("/").pop(), path: f.path, text });
+      }
+    });
     state.files = { clients, savings, debts, study, studyplan, daily, articles, masterplan, habits, transport, indrive };
     state.lastSync = Date.now();
     saveCache();
@@ -968,6 +975,42 @@ function frontmatter(md) {
 }
 const stripFrontmatter = (md) => (md || "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
 
+/* frontmatter() only reads single-line "key: value" pairs, so tags need
+   their own parser — Obsidian writes them either inline (`tags: [A, B]`)
+   or as a YAML list (`tags:` then indented `- A` lines). */
+function frontmatterTags(md) {
+  const fm = (md || "").match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fm) return [];
+  const block = fm[1];
+  const line = block.match(/^tags:[ \t]*(.*)$/m);
+  if (!line) return [];
+  const inline = line[1].trim();
+  if (inline.startsWith("[")) {
+    return inline.replace(/^\[|\]$/g, "").split(",")
+      .map((t) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  }
+  const after = block.slice(block.indexOf(line[0]) + line[0].length).split("\n");
+  const items = [];
+  for (const l of after) {
+    const li = l.match(/^\s+-\s*(.+)$/);
+    if (li) items.push(li[1].trim().replace(/^["']|["']$/g, ""));
+    else if (l.trim() !== "") break; // first non-list, non-blank line ends the tags block
+  }
+  return items;
+}
+const hasResearchTag = (md) => frontmatterTags(md).some((t) => t.toLowerCase() === "research");
+
+/* folders worth scanning for #Research-tagged articles — deliberately
+   excludes 21_DailyNotes, _Daemon, 90_Archive, .trash, 00_Inbox: real content
+   lives in Projects/Library, not internal ops or daily task logs */
+function isResearchCandidate(path) {
+  if (!path.endsWith(".md")) return false;
+  if (path.startsWith("10_Projects/")) return true;
+  if (path.startsWith("30_Library/")) return true;
+  if (path.startsWith("20_Lifelog/") && !path.slice("20_Lifelog/".length).includes("/")) return true;
+  return false;
+}
+
 const num = (s) => {
   const m = String(s || "").replace(/,/g, "").match(/-?\d+(\.\d+)?/);
   return m ? parseFloat(m[0]) : null;
@@ -1265,6 +1308,7 @@ function buildModel() {
       const words = body.split(/\s+/).filter(Boolean).length;
       return {
         name: a.name,
+        path: a.path,
         title,
         created: fm.created || "",
         topic: fm.topic || "",
@@ -1375,7 +1419,7 @@ function linkifyTaskText(text, articles) {
     const label = (m[2] || m[1]).trim();
     const art = resolveArticle(m[1], articles);
     out += art
-      ? `<span class="task-link" data-article-link="${esc(art.name)}">${esc(label)} ${icon("book", 12)}</span>`
+      ? `<span class="task-link" data-article-link="${esc(art.path)}">${esc(label)} ${icon("book", 12)}</span>`
       : `<span class="wikilink">${esc(label)}</span>`;
     last = re.lastIndex;
   }
@@ -2200,7 +2244,7 @@ function renderHabits(m) {
 
 function renderArticles(m) {
   if (state.article) {
-    const a = m.articles.find((x) => x.name === state.article);
+    const a = m.articles.find((x) => x.path === state.article);
     if (a) {
       return `
       <button class="back-btn" id="btn-art-back">${icon("chevronLeft", 17)} All articles</button>
@@ -2230,7 +2274,7 @@ function renderArticles(m) {
 
   const list = matches.length
     ? matches.map((a) => `
-      <button class="card art-card" data-article="${esc(a.name)}">
+      <button class="card art-card" data-article="${esc(a.path)}">
         <div class="art-title">${esc(a.title)}</div>
         ${a.excerpt ? `<div class="art-excerpt">${esc(a.excerpt)}</div>` : ""}
         <div class="art-meta">${esc(a.created)}${a.topic ? ` · ${esc(a.topic)}` : ""} · ${a.minutes} min read</div>
