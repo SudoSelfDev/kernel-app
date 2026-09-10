@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v49";
+const APP_VERSION = "v50";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -2364,6 +2364,7 @@ function render() {
 
   /* settings has no tab — opening it via the gear clears the bar */
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === v));
+  $("#tabbar").dataset.active = v;
 
   /* the floating add button adds tasks on Today, habits on Habits (never over the reader) */
   $("#fab").classList.toggle("hidden", state.studyDoc || (v !== "today" && v !== "habits" && v !== "indrive"));

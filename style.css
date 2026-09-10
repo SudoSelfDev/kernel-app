@@ -111,11 +111,29 @@ body.bars-hidden #topbar { transform: translateY(-110%); opacity: 0; }
   border-radius: 24px;
   padding: 7px 6px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
-  transition: transform 0.25s ease, opacity 0.25s ease;
+  transition: transform 0.25s ease, opacity 0.25s ease, box-shadow 0.4s ease;
 }
 body.bars-hidden #tabbar {
   transform: translate(-50%, calc(100% + env(safe-area-inset-bottom) + 22px));
   opacity: 0;
+}
+/* ambient banner glow — same hue as the active tab's icon glow, spread across
+   the whole bar instead of just the icon. Kept soft (wide blur, low alpha) so
+   it reads as light bouncing off the bar rather than a colored smudge. */
+#tabbar[data-active="today"] {
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 6px 36px -4px color-mix(in srgb, var(--hue-today) 38%, transparent);
+}
+#tabbar[data-active="habits"] {
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 6px 36px -4px color-mix(in srgb, var(--hue-habits) 38%, transparent);
+}
+#tabbar[data-active="money"] {
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 6px 36px -4px color-mix(in srgb, var(--hue-money) 38%, transparent);
+}
+#tabbar[data-active="articles"] {
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 6px 36px -4px color-mix(in srgb, var(--hue-read) 38%, transparent);
+}
+#tabbar[data-active="indrive"] {
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 6px 36px -4px color-mix(in srgb, var(--hue-indrive) 38%, transparent);
 }
 .tab {
   flex: 1; background: none; border: none; color: var(--muted);
