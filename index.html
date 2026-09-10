@@ -18,7 +18,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="style.css?v=48">
+  <link rel="stylesheet" href="style.css?v=49">
 </head>
 <body>
   <header id="topbar">
@@ -58,6 +58,26 @@
     </div>
   </div>
 
+  <div id="indrive-sheet" class="sheet-backdrop center hidden">
+    <div class="sheet">
+      <h3 id="id-sheet-title">Add entry</h3>
+      <label class="rv-label">Date</label>
+      <input type="date" id="id-date">
+      <label class="rv-label">Km driven</label>
+      <input type="number" inputmode="decimal" id="id-km" placeholder="0">
+      <label class="rv-label">Gross earned (MAD)</label>
+      <input type="number" inputmode="decimal" id="id-gross" placeholder="0">
+      <label class="rv-label">Notes <span class="muted">· optional</span></label>
+      <input type="text" id="id-notes" placeholder="">
+      <p class="muted" id="id-sheet-hint" style="font-size:0.72rem"></p>
+      <div class="sheet-actions">
+        <button class="btn secondary" id="btn-indrive-cancel">Cancel</button>
+        <button class="btn" id="btn-indrive-save">Add entry</button>
+      </div>
+      <button class="show-toggle danger hidden" id="btn-indrive-remove">Remove entry</button>
+    </div>
+  </div>
+
   <div id="client-sheet" class="sheet-backdrop hidden"></div>
 
   <nav id="tabbar">
@@ -68,6 +88,6 @@
     <button data-view="indrive" data-icon="indrive" class="tab"><span class="ticon"></span>inDrive</button>
   </nav>
 
-  <script src="app.js?v=48"></script>
+  <script src="app.js?v=49"></script>
 </body>
 </html>

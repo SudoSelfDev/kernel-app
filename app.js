@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v48";
+const APP_VERSION = "v49";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -48,8 +48,7 @@ const state = {
   studyDoc: false,    // when true, the cloud study plan opens in the in-app reader
   articleReturn: null, // view to return to when leaving an article (e.g. opened from a task)
   transportWeek: null, // 7-day strip on the transport card: null = auto, true/false = user choice
-  indriveForm: false, // "Add entry" form on the inDrive tab expanded
-  indriveEditDate: null, // date (YYYY-MM-DD) of the row being edited in the form, or null for a new entry
+  indriveEditDate: null, // date (YYYY-MM-DD) of the row open in the add/edit sheet, or null for a new entry
   habitPop: null, // name of the habit whose checkbox should play the pop-in animation on this render, or null
 };
 
@@ -1931,7 +1930,6 @@ function scriptsCard(m) {
 }
 
 function renderIndrive(m) {
-  const dis = state.busy ? "disabled" : "";
   const d = m.indrive || { price: 15, consumption: 6.5, rows: [], totalNet: 0, totalGross: 0, totalKm: 0 };
 
   const totalsCard = `
@@ -1939,30 +1937,6 @@ function renderIndrive(m) {
       <h2>🚗 inDrive <span class="chip ok">${d.totalNet.toLocaleString()} MAD net</span></h2>
       <p class="muted review-note">${d.rows.length} day${d.rows.length === 1 ? "" : "s"} logged · ${d.totalKm.toLocaleString()} km · ${d.totalGross.toLocaleString()} MAD gross so far</p>
     </div>`;
-
-  let formCard;
-  if (state.indriveForm) {
-    const editing = !!state.indriveEditDate;
-    const ex = editing ? d.rows.find((r) => r.date === state.indriveEditDate) : null;
-    formCard = `
-      <div class="card">
-        <label class="rv-label">Date</label>
-        <input type="date" id="id-date" value="${esc(ex ? ex.date : todayIso())}" ${editing ? "readonly" : ""}>
-        <label class="rv-label">Km driven</label>
-        <input type="number" inputmode="decimal" id="id-km" placeholder="0" value="${ex ? ex.km : ""}">
-        <label class="rv-label">Gross earned (MAD)</label>
-        <input type="number" inputmode="decimal" id="id-gross" placeholder="0" value="${ex ? ex.gross : ""}">
-        <label class="rv-label">Notes <span class="muted">· optional</span></label>
-        <input type="text" id="id-notes" placeholder="" value="${ex ? esc(ex.notes) : ""}">
-        <p class="muted" style="font-size:0.72rem;margin-top:4px">Diesel is calculated for you at ${d.consumption} L/100km × ${d.price} MAD/L.</p>
-        <div style="height:12px"></div>
-        <button class="btn" id="btn-indrive-save" ${dis}>${editing ? "Save changes" : "Add entry"}</button>
-        ${editing ? `<button class="show-toggle danger" id="btn-indrive-remove" ${dis}>Remove entry</button>` : ""}
-        <button class="show-toggle" id="btn-indrive-cancel">Cancel</button>
-      </div>`;
-  } else {
-    formCard = "";
-  }
 
   const logCard = `
     <div class="card">
@@ -1977,7 +1951,7 @@ function renderIndrive(m) {
         </div>`).join("") : `<div class="empty">Nothing logged yet — tap the + button below</div>`}
     </div>`;
 
-  return totalsCard + formCard + logCard;
+  return totalsCard + logCard;
 }
 
 function renderClients(m) {
@@ -2567,32 +2541,8 @@ function render() {
   }
   if (v === "indrive") {
     document.querySelectorAll("[data-indrive-edit]").forEach((el) => {
-      el.onclick = () => { state.indriveForm = true; state.indriveEditDate = el.dataset.indriveEdit; render(); };
+      el.onclick = () => openIndriveSheet(el.dataset.indriveEdit);
     });
-    const idCancel = $("#btn-indrive-cancel");
-    if (idCancel) idCancel.onclick = () => { state.indriveForm = false; state.indriveEditDate = null; render(); };
-    const idSave = $("#btn-indrive-save");
-    if (idSave) idSave.onclick = () => {
-      const date = ($("#id-date")?.value || "").trim();
-      const km = num($("#id-km")?.value);
-      const gross = num($("#id-gross")?.value);
-      const notes = ($("#id-notes")?.value || "").trim();
-      if (!date) { state.error = "Pick a date."; render(); return; }
-      if (km == null) { state.error = "Enter km driven."; render(); return; }
-      if (gross == null) { state.error = "Enter gross earned."; render(); return; }
-      setIndriveEntry(date, km, gross, notes);
-      state.indriveForm = false;
-      state.indriveEditDate = null;
-      render();
-    };
-    const idRemove = $("#btn-indrive-remove");
-    if (idRemove) idRemove.onclick = () => {
-      if (!confirm(`Remove the ${state.indriveEditDate} entry? This can't be undone.`)) return;
-      removeIndriveEntry(state.indriveEditDate);
-      state.indriveForm = false;
-      state.indriveEditDate = null;
-      render();
-    };
   }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
@@ -2703,6 +2653,31 @@ function closeHabitModal() {
   $("#habit-name").value = "";
 }
 
+/* ---------- inDrive add/edit sheet ---------- */
+
+function openIndriveSheet(editDate) {
+  if (state.busy) return;
+  state.indriveEditDate = editDate || null;
+  const editing = !!editDate;
+  const d = (buildModel().indrive) || { price: 15, consumption: 6.5, rows: [] };
+  const ex = editing ? d.rows.find((r) => r.date === editDate) : null;
+  $("#id-sheet-title").textContent = editing ? "Edit entry" : "Add entry";
+  $("#id-date").value = ex ? ex.date : todayIso();
+  $("#id-date").readOnly = editing;
+  $("#id-km").value = ex ? ex.km : "";
+  $("#id-gross").value = ex ? ex.gross : "";
+  $("#id-notes").value = ex ? ex.notes : "";
+  $("#id-sheet-hint").textContent = `Diesel is calculated for you at ${d.consumption} L/100km × ${d.price} MAD/L.`;
+  $("#btn-indrive-save").textContent = editing ? "Save changes" : "Add entry";
+  $("#btn-indrive-remove").classList.toggle("hidden", !editing);
+  $("#indrive-sheet").classList.remove("hidden");
+  $("#id-km").focus();
+}
+function closeIndriveSheet() {
+  $("#indrive-sheet").classList.add("hidden");
+  state.indriveEditDate = null;
+}
+
 /* ---------- boot ---------- */
 
 /* switch tabs from anywhere (tab bar, or a shortcut tile like the inDrive stat) */
@@ -2713,8 +2688,7 @@ function goToTab(view) {
   state.habitsEdit = false;
   state.taskEdit = null;
   state.studyDoc = false;
-  state.indriveForm = false;
-  state.indriveEditDate = null;
+  closeIndriveSheet();
   showBars();
   render();
   scrollTo(0, 0);
@@ -2749,7 +2723,7 @@ $("#fab").innerHTML = icon("plus", 24);
 $("#fab").onclick = () => {
   bounceIcon($("#fab"));
   if (state.view === "habits") return openHabitModal();
-  if (state.view === "indrive") { state.indriveForm = true; state.indriveEditDate = null; showBars(); return render(); }
+  if (state.view === "indrive") return openIndriveSheet(null);
   return openComposer();
 };
 $("#composer-cancel").onclick = closeComposer;
@@ -2774,6 +2748,27 @@ $("#habit-add").onclick = () => {
 $("#habit-name").onkeydown = (e) => {
   if (e.key === "Enter") $("#habit-add").click();
   if (e.key === "Escape") closeHabitModal();
+};
+$("#indrive-sheet").onclick = (e) => { if (e.target.id === "indrive-sheet") closeIndriveSheet(); };
+$("#btn-indrive-cancel").onclick = closeIndriveSheet;
+$("#btn-indrive-save").onclick = () => {
+  const date = ($("#id-date").value || "").trim();
+  const km = num($("#id-km").value);
+  const gross = num($("#id-gross").value);
+  const notes = ($("#id-notes").value || "").trim();
+  if (!date) { state.error = "Pick a date."; return render(); }
+  if (km == null) { state.error = "Enter km driven."; return render(); }
+  if (gross == null) { state.error = "Enter gross earned."; return render(); }
+  setIndriveEntry(date, km, gross, notes);
+  closeIndriveSheet();
+  render();
+};
+$("#btn-indrive-remove").onclick = () => {
+  const date = state.indriveEditDate;
+  if (!confirm(`Remove the ${date} entry? This can't be undone.`)) return;
+  removeIndriveEntry(date);
+  closeIndriveSheet();
+  render();
 };
 
 /* Service worker with auto-update: when a new version activates it takes control

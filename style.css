@@ -280,14 +280,18 @@ body.bars-hidden #tabbar {
 }
 body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
 
-/* task composer sheet */
+/* task composer + inDrive entry sheets — animated open/close.
+   Kept in the layout (no display:none) so opacity/transform can transition;
+   pointer-events is what actually keeps a hidden sheet from intercepting taps. */
 .sheet-backdrop {
   position: fixed; inset: 0; z-index: 20;
   background: rgba(0, 0, 0, 0.55);
   display: flex; align-items: flex-end; justify-content: center;
+  opacity: 1; pointer-events: auto;
+  transition: opacity 0.22s ease;
 }
-.sheet-backdrop.hidden { display: none; }
-/* centered popup variant — used by the add-task and add-habit dialogs */
+.sheet-backdrop.hidden { opacity: 0; pointer-events: none; }
+/* centered popup variant — used by the add-task, add-habit and inDrive-entry dialogs */
 .sheet-backdrop.center { align-items: center; padding: 20px; }
 .sheet-backdrop.center .sheet {
   border-bottom: 1px solid var(--border);
@@ -301,7 +305,12 @@ body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
   border-radius: var(--radius) var(--radius) 0 0;
   padding: 18px 16px calc(env(safe-area-inset-bottom) + 18px);
   display: flex; flex-direction: column; gap: 10px;
+  transform: translateY(0) scale(1);
+  transition: transform 0.28s cubic-bezier(.34, 1.15, .4, 1);
 }
+.sheet-backdrop.hidden .sheet { transform: translateY(40px); }
+.sheet-backdrop.center.hidden .sheet { transform: translateY(16px) scale(0.96); }
+#btn-indrive-remove.hidden { display: none; }
 .sheet h3 { font-size: 1rem; }
 .sheet p { font-size: 0.78rem; }
 .sheet textarea {
