@@ -262,10 +262,22 @@ body.bars-hidden #tabbar {
 }
 #fab.hidden { display: none; }
 #fab[disabled] { opacity: 0.6; }
-/* matches the active tab's accent, same hues as the tab-bar glow */
-#fab[data-tab="today"]   { background: var(--hue-today); }
-#fab[data-tab="habits"]  { background: var(--hue-habits); }
-#fab[data-tab="indrive"] { background: var(--hue-indrive); }
+#fab:active { transform: scale(0.9); }
+/* matches the active tab's accent, same hues as the tab-bar glow, with a
+   colored glow layered under the depth shadow so it doesn't go flat/muddy
+   against a dark background */
+#fab[data-tab="today"] {
+  background: var(--hue-today);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35), 0 0 18px 2px color-mix(in srgb, var(--hue-today) 55%, transparent);
+}
+#fab[data-tab="habits"] {
+  background: var(--hue-habits);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35), 0 0 18px 2px color-mix(in srgb, var(--hue-habits) 55%, transparent);
+}
+#fab[data-tab="indrive"] {
+  background: var(--hue-indrive);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35), 0 0 18px 2px color-mix(in srgb, var(--hue-indrive) 55%, transparent);
+}
 body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
 
 /* task composer sheet */

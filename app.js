@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v47";
+const APP_VERSION = "v48";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -2747,6 +2747,7 @@ $("#btn-theme").onclick = () => {
 
 $("#fab").innerHTML = icon("plus", 24);
 $("#fab").onclick = () => {
+  bounceIcon($("#fab"));
   if (state.view === "habits") return openHabitModal();
   if (state.view === "indrive") { state.indriveForm = true; state.indriveEditDate = null; showBars(); return render(); }
   return openComposer();
