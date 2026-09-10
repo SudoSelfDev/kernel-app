@@ -262,6 +262,10 @@ body.bars-hidden #tabbar {
 }
 #fab.hidden { display: none; }
 #fab[disabled] { opacity: 0.6; }
+/* matches the active tab's accent, same hues as the tab-bar glow */
+#fab[data-tab="today"]   { background: var(--hue-today); }
+#fab[data-tab="habits"]  { background: var(--hue-habits); }
+#fab[data-tab="indrive"] { background: var(--hue-indrive); }
 body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
 
 /* task composer sheet */

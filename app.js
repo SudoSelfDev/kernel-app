@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v46";
+const APP_VERSION = "v47";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -1961,7 +1961,7 @@ function renderIndrive(m) {
         <button class="show-toggle" id="btn-indrive-cancel">Cancel</button>
       </div>`;
   } else {
-    formCard = `<button class="show-toggle" id="btn-indrive-add">+ Add entry</button>`;
+    formCard = "";
   }
 
   const logCard = `
@@ -1974,7 +1974,7 @@ function renderIndrive(m) {
             <div class="r-sub">${r.km} km · ${r.gross} gross − ${r.diesel} diesel${r.notes ? " · " + esc(r.notes) : ""}</div>
           </div>
           <div class="r-end"><b>${r.net.toLocaleString()}</b> <span class="muted">MAD</span></div>
-        </div>`).join("") : `<div class="empty">Nothing logged yet — tap + Add entry</div>`}
+        </div>`).join("") : `<div class="empty">Nothing logged yet — tap the + button below</div>`}
     </div>`;
 
   return totalsCard + formCard + logCard;
@@ -2392,7 +2392,8 @@ function render() {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === v));
 
   /* the floating add button adds tasks on Today, habits on Habits (never over the reader) */
-  $("#fab").classList.toggle("hidden", state.studyDoc || (v !== "today" && v !== "habits"));
+  $("#fab").classList.toggle("hidden", state.studyDoc || (v !== "today" && v !== "habits" && v !== "indrive"));
+  $("#fab").dataset.tab = v;
   $("#fab").disabled = state.busy;
 
   if (v === "today" && !state.studyDoc) {
@@ -2568,8 +2569,6 @@ function render() {
     document.querySelectorAll("[data-indrive-edit]").forEach((el) => {
       el.onclick = () => { state.indriveForm = true; state.indriveEditDate = el.dataset.indriveEdit; render(); };
     });
-    const idAdd = $("#btn-indrive-add");
-    if (idAdd) idAdd.onclick = () => { state.indriveForm = true; state.indriveEditDate = null; render(); };
     const idCancel = $("#btn-indrive-cancel");
     if (idCancel) idCancel.onclick = () => { state.indriveForm = false; state.indriveEditDate = null; render(); };
     const idSave = $("#btn-indrive-save");
