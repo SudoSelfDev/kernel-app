@@ -25,6 +25,7 @@
   --hue-money: #4ade80;   --hue-money-dim: #1d3528;
   --hue-read: #38bdf8;    --hue-read-dim: #0c2a3a;
   --hue-indrive: #a7e92f; --hue-indrive-dim: #23310a;
+  --hue-gym: #fb7185;     --hue-gym-dim: #3a1620;
 }
 
 html[data-theme="light"] {
@@ -52,6 +53,7 @@ html[data-theme="light"] {
   --hue-money: #16a34a;   --hue-money-dim: #dcfce7;
   --hue-read: #0284c7;    --hue-read-dim: #dbeafe;
   --hue-indrive: #5a7a15; --hue-indrive-dim: #eef9d0;
+  --hue-gym: #e11d48;     --hue-gym-dim: #ffe4e6;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -150,8 +152,8 @@ body.bars-hidden #tabbar {
 #tabbar[data-active="money"] {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 6px 36px -4px color-mix(in srgb, var(--hue-money) 38%, transparent);
 }
-#tabbar[data-active="articles"] {
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 6px 36px -4px color-mix(in srgb, var(--hue-read) 38%, transparent);
+#tabbar[data-active="gym"] {
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 6px 36px -4px color-mix(in srgb, var(--hue-gym) 38%, transparent);
 }
 #tabbar[data-active="indrive"] {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 6px 36px -4px color-mix(in srgb, var(--hue-indrive) 38%, transparent);
@@ -167,7 +169,7 @@ body.bars-hidden #tabbar {
 .tab[data-view="today"].active    { color: var(--hue-today);   filter: drop-shadow(0 3px 6px var(--hue-today)); }
 .tab[data-view="habits"].active   { color: var(--hue-habits);  filter: drop-shadow(0 3px 6px var(--hue-habits)); }
 .tab[data-view="money"].active    { color: var(--hue-money);   filter: drop-shadow(0 3px 6px var(--hue-money)); }
-.tab[data-view="articles"].active { color: var(--hue-read);    filter: drop-shadow(0 3px 6px var(--hue-read)); }
+.tab[data-view="gym"].active      { color: var(--hue-gym);     filter: drop-shadow(0 3px 6px var(--hue-gym)); }
 .tab[data-view="indrive"].active  { color: var(--hue-indrive); filter: drop-shadow(0 3px 6px var(--hue-indrive)); }
 .tab:active { background: var(--surface2); }
 
@@ -317,6 +319,10 @@ body.bars-hidden #tabbar {
   background: var(--hue-indrive);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35), 0 0 18px 2px color-mix(in srgb, var(--hue-indrive) 55%, transparent);
 }
+#fab[data-tab="gym"] {
+  background: var(--hue-gym);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35), 0 0 18px 2px color-mix(in srgb, var(--hue-gym) 55%, transparent);
+}
 body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
 
 /* task composer + inDrive entry sheets — animated open/close.
@@ -339,6 +345,8 @@ body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
 }
 .sheet {
   width: min(520px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border); border-bottom: none;
   border-radius: var(--radius) var(--radius) 0 0;
@@ -350,6 +358,7 @@ body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
 .sheet-backdrop.hidden .sheet { transform: translateY(40px); }
 .sheet-backdrop.center.hidden .sheet { transform: translateY(16px) scale(0.96); }
 #btn-indrive-remove.hidden { display: none; }
+#btn-gym-remove.hidden { display: none; }
 .sheet h3 { font-size: 1rem; }
 .sheet p { font-size: 0.78rem; }
 .sheet textarea {
@@ -709,6 +718,19 @@ button.duo-tile:active { background: var(--surface2); }
 .month-saved { margin-top: 12px; display: flex; flex-direction: column; gap: 7px; }
 .ms-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; }
 .ms-row span:first-child { color: var(--muted); }
+
+/* gym tab: 2x2 nutrition-target grid, reusing .mg-cell/.mg-val/.mg-lbl styling */
+.gym-nutri-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* gym tab: one row per exercise in the log sheet — name/target grows, two compact inputs beside it */
+.gym-ex-row { display: flex; align-items: center; gap: 8px; }
+.gym-ex-name { flex: 1; min-width: 0; font-size: 0.85rem; }
+.gym-ex-name .muted { display: block; font-size: 0.72rem; margin-top: 1px; }
+.gym-ex-row .gym-ex-weight, .gym-ex-row .gym-ex-reps {
+  width: 64px; flex-shrink: 0; background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 6px;
+  font-size: 0.85rem; text-align: center; font-family: inherit;
+}
 
 /* Sunday review checklist */
 .review-note { font-size: 0.74rem; line-height: 1.4; margin-bottom: 8px; }

@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v51";
+const APP_VERSION = "v52";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -22,6 +22,7 @@ const PATHS = {
   masterplan: atob("MTBfUHJvamVjdHMvRGFyU3RyZWFtL21hc3Rlci1wbGFuLm1k"),
   habits: atob("MjBfTGlmZWxvZy9IYWJpdExvZy5tZA=="),
   indrive: atob("MTBfUHJvamVjdHMvSW5Ecml2ZS9pbmRyaXZlLWluY29tZS5tZA=="),
+  gym: atob("MTBfUHJvamVjdHMvRml0bmVzcy9neW0tbG9nLm1k"),
 };
 
 const LS_TOKEN = "kernel_pat";
@@ -49,6 +50,9 @@ const state = {
   articleReturn: null, // view to return to when leaving an article (e.g. opened from a task)
   transportWeek: null, // 7-day strip on the transport card: null = auto, true/false = user choice
   indriveEditDate: null, // date (YYYY-MM-DD) of the row open in the add/edit sheet, or null for a new entry
+  gymEditKey: null, // "date|workout" of the session open in the gym sheet, or null for a new session
+  gymWorkoutPick: null, // "A" | "B" chosen in the currently-open gym sheet (before save)
+  bwEdit: null, // date of the bodyweight row being edited inline, or null
   habitPop: null, // name of the habit whose checkbox should play the pop-in animation on this render, or null
 };
 
@@ -110,7 +114,39 @@ const habitRingOffset = (done, total) => (total ? HABIT_RING_C * (1 - done / tot
 
 /* left-to-right order of the tab bar — lets a view swap pick a slide
    direction, like flipping through pages rather than just cutting */
-const TAB_ORDER = ["today", "habits", "money", "articles", "indrive"];
+const TAB_ORDER = ["today", "habits", "money", "gym", "indrive"];
+
+/* Full-Body Recomposition Program — 10_Projects/Fitness/training-plan.md.
+   Hardcoded (not vault-parsed) so the logging form's fields always match the
+   plan exactly; if the plan changes, update both this and training-plan.md. */
+const GYM_WORKOUTS = {
+  A: [
+    { name: "Goblet Squat", alt: "Leg Press if ankle unhappy", target: "3 x 10-12" },
+    { name: "Flat Bench Press", target: "3 x 8-10" },
+    { name: "Seated Cable Row", target: "3 x 10-12" },
+    { name: "Dumbbell Shoulder Press", target: "3 x 10-12" },
+    { name: "Romanian Deadlift", target: "3 x 10" },
+    { name: "Plank", target: "3 x 30-45s", isTimed: true },
+  ],
+  B: [
+    { name: "Leg Press", alt: "Bulgarian Split Squat if ankle allows", target: "3 x 10-12" },
+    { name: "Lat Pulldown", target: "3 x 10-12" },
+    { name: "Incline Dumbbell Press", target: "3 x 10-12" },
+    { name: "Dumbbell Row", target: "3 x 10-12" },
+    { name: "Seated Calf Raise", target: "3 x 12-15" },
+    { name: "Cable Face Pull", target: "3 x 12-15" },
+  ],
+};
+/* Mon/Wed/Fri lift, Tue/Sat swim, Thu/Sun rest — day index from Date#getDay() */
+const GYM_SCHEDULE = {
+  0: { kind: "rest", label: "Full rest" },
+  1: { kind: "lift", label: "Lift" },
+  2: { kind: "swim", label: "Swim (30-40 min)" },
+  3: { kind: "lift", label: "Lift" },
+  4: { kind: "rest", label: "Rest or light walk" },
+  5: { kind: "lift", label: "Lift" },
+  6: { kind: "swim", label: "Swim (30-45 min) or rest" },
+};
 let _lastViewKey = null;
 
 /* #view's whole innerHTML is replaced on every render (no virtual-DOM diff),
@@ -181,6 +217,7 @@ const ICONS = {
   chevronDown: '<polyline points="6 9 12 15 18 9"/>',
   checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.27"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>',
+  dumbbell: '<path d="M6.5 6.5v11M17.5 6.5v11M2 9.5v5M22 9.5v5M6.5 12h11"/>',
 };
 
 /* inDrive's real mark — a rounded square in their brand green ("Inch Worm",
@@ -350,7 +387,7 @@ async function syncAll() {
   setSyncStatus("Syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, study, studyplan, daily, tree, masterplan, habits, transport, indrive] = await Promise.all([
+    const [clients, savings, debts, study, studyplan, daily, tree, masterplan, habits, transport, indrive, gym] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
@@ -362,6 +399,7 @@ async function syncAll() {
       fetchWithSha(PATHS.habits, { optional: true }),
       fetchRaw(PATHS.transport, { optional: true }),
       fetchRaw(PATHS.indrive, { optional: true }),
+      fetchRaw(PATHS.gym, { optional: true }),
     ]);
     /* #Research articles can live anywhere under Projects/Library/top-level
        Lifelog now — fetch every candidate and keep only the tagged ones */
@@ -374,7 +412,7 @@ async function syncAll() {
         articles.push({ name: f.path.split("/").pop(), path: f.path, text });
       }
     });
-    state.files = { clients, savings, debts, study, studyplan, daily, articles, masterplan, habits, transport, indrive };
+    state.files = { clients, savings, debts, study, studyplan, daily, articles, masterplan, habits, transport, indrive, gym };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -1119,7 +1157,7 @@ function buildModel() {
   const f = state.files;
   const m = {
     active: [], leads: [], churned: [], savings: {}, debts: [], debtTotal: null,
-    study: null, tasks: null, articles: [], review: null, transport: null, indrive: null,
+    study: null, tasks: null, articles: [], review: null, transport: null, indrive: null, gym: null,
   };
 
   if (f.clients) {
@@ -1233,6 +1271,39 @@ function buildModel() {
     const totalGross = rows.reduce((s, r) => s + r.gross, 0);
     const totalKm = rows.reduce((s, r) => s + r.km, 0);
     m.indrive = { price, consumption, rows, totalNet, totalGross, totalKm };
+  }
+
+  if (f.gym) {
+    const t = f.gym;
+    const bodyweights = parseTable(section(t, "## Bodyweight Log")).map((r) => {
+      const vals = Object.values(r);
+      return { date: (vals[0] || "").trim(), weight: num(vals[1]), notes: (vals[2] || "").trim() };
+    }).filter((r) => r.date && r.weight != null);
+    bodyweights.sort((a, b) => b.date.localeCompare(a.date));
+
+    const exRows = parseTable(section(t, "## Workout Log")).map((r) => {
+      const vals = Object.values(r);
+      return {
+        date: (vals[0] || "").trim(),
+        workout: (vals[1] || "").trim().toUpperCase(),
+        exercise: (vals[2] || "").trim(),
+        weight: num(vals[3]),
+        reps: (vals[4] || "").trim(),
+      };
+    }).filter((r) => r.date && r.workout && r.exercise);
+
+    const sessionMap = new Map();
+    exRows.forEach((r) => {
+      const key = `${r.date}|${r.workout}`;
+      if (!sessionMap.has(key)) sessionMap.set(key, { date: r.date, workout: r.workout, exercises: [] });
+      sessionMap.get(key).exercises.push(r);
+    });
+    const sessions = [...sessionMap.values()].sort((a, b) => b.date.localeCompare(a.date));
+    const lastSession = sessions[0] || null;
+    const lastWorkout = lastSession ? lastSession.workout : null;
+    const nextWorkout = lastWorkout === "A" ? "B" : "A";
+
+    m.gym = { bodyweights, sessions, lastSession, lastWorkout, nextWorkout, lastBodyweight: bodyweights[0] || null };
   }
 
   if (f.daily && typeof f.daily.text === "string") {
@@ -1650,6 +1721,105 @@ function removeIndriveEntry(date) {
   applyIndriveChange(lines.join("\n"));
 }
 
+/* ---------- gym log (bodyweight + workout sessions) ---------- */
+
+let _gymTimer = null;
+const gymText = () => state.files.gym || "";
+
+function applyGymChange(newText) {
+  state.files.gym = newText;
+  render();
+  if (_gymTimer) clearTimeout(_gymTimer);
+  _gymTimer = setTimeout(flushGym, SAVE_DELAY);
+}
+
+async function flushGym() {
+  _gymTimer = null;
+  const text = gymText();
+  if (!text) return;
+  state.busy = true;
+  render();
+  try {
+    const serverText = await fetchRaw(PATHS.gym);
+    const baseSha = await gitBlobSha(serverText);
+    await putFile(PATHS.gym, text, "kernel-app: update gym log", baseSha);
+    state.lastSync = Date.now();
+    saveCache();
+    state.error = null;
+  } catch (e) {
+    if (e.message === "auth-write") state.error = "Write rejected — your token needs Contents: Read and write.";
+    else if (e.message === "conflict") { state.error = "Gym log changed on GitHub — refreshing."; state.busy = false; await syncAll(); return; }
+    else state.error = "Couldn't save — check your connection and try again.";
+  }
+  state.busy = false;
+  render();
+}
+
+/* [start,end] line-index range of the table rows under a "## Heading" match */
+function gymTableRange(lines, headingRegex) {
+  const h = lines.findIndex((l) => headingRegex.test(l.trim()));
+  if (h === -1) return null;
+  let start = -1, end = -1;
+  for (let i = h + 1; i < lines.length; i++) {
+    const tr = lines[i].trim();
+    if (tr.startsWith("|")) { if (start === -1) start = i; end = i; }
+    else if (start !== -1) break;
+    else if (/^#+\s/.test(tr)) break;
+  }
+  return start === -1 ? null : { start, end };
+}
+
+function setBodyweight(date, weight, notes) {
+  const lines = gymText().split("\n");
+  const range = gymTableRange(lines, /^##\s+bodyweight log/i);
+  if (!range) return;
+  const rowStr = `| ${date} | ${weight} | ${notes || ""} |`;
+  let rowIdx = -1;
+  for (let i = range.start + 2; i <= range.end; i++) {
+    if ((lines[i].split("|")[1] || "").trim() === date) { rowIdx = i; break; }
+  }
+  if (rowIdx !== -1) lines[rowIdx] = rowStr;
+  else lines.splice(range.end + 1, 0, rowStr);
+  applyGymChange(lines.join("\n"));
+}
+
+function removeBodyweight(date) {
+  const lines = gymText().split("\n");
+  const range = gymTableRange(lines, /^##\s+bodyweight log/i);
+  if (!range) return;
+  for (let i = range.start + 2; i <= range.end; i++) {
+    if ((lines[i].split("|")[1] || "").trim() === date) { lines.splice(i, 1); break; }
+  }
+  applyGymChange(lines.join("\n"));
+}
+
+/* replace (or insert) all exercise rows for one date+workout session */
+function setGymSession(date, workout, entries) {
+  let lines = gymText().split("\n");
+  let range = gymTableRange(lines, /^##\s+workout log/i);
+  if (!range) return;
+  for (let i = range.end; i >= range.start + 2; i--) {
+    const cells = lines[i].split("|");
+    if ((cells[1] || "").trim() === date && (cells[2] || "").trim().toUpperCase() === workout) lines.splice(i, 1);
+  }
+  range = gymTableRange(lines, /^##\s+workout log/i);
+  const insertAt = range ? range.end + 1 : lines.length;
+  const rows = entries.map((e) => `| ${date} | ${workout} | ${e.exercise} | ${e.weight ?? ""} | ${e.reps} |`);
+  lines.splice(insertAt, 0, ...rows);
+  applyGymChange(lines.join("\n"));
+}
+
+function removeGymSession(date, workout) {
+  const lines = gymText().split("\n");
+  const range = gymTableRange(lines, /^##\s+workout log/i);
+  if (!range) return;
+  for (let i = range.end; i >= range.start + 2; i--) {
+    const cells = lines[i].split("|");
+    if ((cells[1] || "").trim() === date && (cells[2] || "").trim().toUpperCase() === workout) lines.splice(i, 1);
+  }
+  applyGymChange(lines.join("\n"));
+}
+
 function renderToday(m) {
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
   const dis = state.busy ? "disabled" : "";
@@ -1952,6 +2122,84 @@ function renderIndrive(m) {
     </div>`;
 
   return totalsCard + logCard;
+}
+
+function gymTodayLabel() {
+  return GYM_SCHEDULE[new Date().getDay()] || { kind: "rest", label: "Rest" };
+}
+
+function renderGym(m) {
+  const g = m.gym || { bodyweights: [], sessions: [], lastWorkout: null, nextWorkout: "A", lastBodyweight: null };
+  const today = gymTodayLabel();
+  const dis = state.busy ? "disabled" : "";
+
+  const heroCard = `
+    <div class="card">
+      <h2>🏋️ Gym</h2>
+      <p class="muted review-note">${today.kind === "lift" ? `Today — Lift (Workout ${esc(g.nextWorkout)} suggested)` : `Today — ${esc(today.label)}`}</p>
+      ${today.kind === "lift" ? `<p class="muted" style="font-size:0.72rem;margin-top:2px">Suggests whichever workout you didn't do last, so A/B stay balanced.</p>` : ""}
+    </div>`;
+
+  const bwEditRow = state.bwEdit ? g.bodyweights.find((b) => b.date === state.bwEdit) : null;
+  const bwCard = `
+    <div class="card">
+      <h2>Bodyweight ${g.lastBodyweight ? `<span class="chip ok">${g.lastBodyweight.weight} kg</span>` : ""}</h2>
+      <p class="muted review-note">${g.lastBodyweight ? `Last weighed ${esc(g.lastBodyweight.date)}${g.lastBodyweight.notes ? " · " + esc(g.lastBodyweight.notes) : ""}.` : "Weigh in 2-3x/week — track the trend, not day-to-day noise."}</p>
+      <label class="rv-label">Date</label>
+      <input type="date" id="bw-date" value="${esc(state.bwEdit || todayIso())}" ${state.bwEdit ? "readonly" : ""}>
+      <label class="rv-label">Weight (kg)</label>
+      <input type="number" inputmode="decimal" id="bw-weight" placeholder="70" value="${bwEditRow ? esc(String(bwEditRow.weight)) : ""}">
+      <label class="rv-label">Notes <span class="muted">· optional</span></label>
+      <input type="text" id="bw-notes" placeholder="" value="${bwEditRow ? esc(bwEditRow.notes) : ""}">
+      <div style="height:10px"></div>
+      <button class="btn" id="btn-bw-save" ${dis}>${state.bwEdit ? "Save changes" : "Log weight"}</button>
+      ${state.bwEdit ? `<button class="show-toggle danger" id="btn-bw-remove" ${dis}>Remove entry</button><button class="show-toggle" id="btn-bw-cancel">Cancel</button>` : ""}
+      ${g.bodyweights.length ? g.bodyweights.slice(0, 5).map((b) => `
+        <div class="row" data-bw-edit="${esc(b.date)}">
+          <div class="r-main"><div class="r-title">${esc(b.date)}</div>${b.notes ? `<div class="r-sub">${esc(b.notes)}</div>` : ""}</div>
+          <div class="r-end"><b>${b.weight}</b> <span class="muted">kg</span></div>
+        </div>`).join("") : ""}
+    </div>`;
+
+  const sessionsCard = `
+    <div class="card">
+      <h2>Workout Log</h2>
+      ${g.sessions.length ? g.sessions.slice(0, 8).map((s) => `
+        <div class="row" data-gym-edit="${esc(s.date)}|${esc(s.workout)}">
+          <div class="r-main">
+            <div class="r-title">${esc(s.date)} · Workout ${esc(s.workout)}</div>
+            <div class="r-sub">${s.exercises.map((e) => {
+              const w = e.weight != null ? `${e.weight}kg` : "";
+              const parts = [w, e.reps ? esc(e.reps) : ""].filter(Boolean);
+              return `${esc(e.exercise)}${parts.length ? " " + parts.join("×") : ""}`;
+            }).join(" · ")}</div>
+          </div>
+        </div>`).join("") : `<div class="empty">Nothing logged yet — tap the + button below</div>`}
+    </div>`;
+
+  const workoutRef = (letter) => `
+    <div class="card">
+      <h2>Workout ${letter}</h2>
+      ${GYM_WORKOUTS[letter].map((e) => `
+        <div class="row">
+          <div class="r-main"><div class="r-title">${esc(e.name)}</div>${e.alt ? `<div class="r-sub">or ${esc(e.alt)}</div>` : ""}</div>
+          <div class="r-end muted">${esc(e.target)}</div>
+        </div>`).join("")}
+    </div>`;
+
+  const nutritionCard = `
+    <div class="card">
+      <h2>Nutrition Targets</h2>
+      <div class="gym-nutri-grid">
+        <div class="mg-cell"><div class="mg-val">2100-2200</div><div class="mg-lbl">kcal/day</div></div>
+        <div class="mg-cell"><div class="mg-val">150g</div><div class="mg-lbl">protein</div></div>
+        <div class="mg-cell"><div class="mg-val">70g</div><div class="mg-lbl">fat</div></div>
+        <div class="mg-cell"><div class="mg-val">220g</div><div class="mg-lbl">carbs</div></div>
+      </div>
+      <p class="muted" style="font-size:0.72rem;margin-top:10px">Hit protein first, every day. Reassess every 2-3 weeks based on the weekly-average trend, not daily fluctuation. <b>Ankle:</b> avoid jumping, sprinting, sharp pivots — swap to the listed alternative if anything causes sharp pain.</p>
+    </div>`;
+
+  return heroCard + bwCard + sessionsCard + workoutRef("A") + workoutRef("B") + nutritionCard;
 }
 
 function renderClients(m) {
@@ -2277,6 +2525,12 @@ function renderSettings() {
   const pref = getThemePref();
   return `
   <div class="card">
+    <h2>More</h2>
+    <p class="muted" style="font-size:0.8rem;margin-bottom:10px">Off the tab bar, still in the app.</p>
+    <button class="show-toggle" id="btn-open-articles">📖 Read</button>
+    <button class="show-toggle" id="btn-open-clients">👥 Clients</button>
+  </div>
+  <div class="card">
     <h2>Theme</h2>
     <div class="seg">
       <button data-theme-pref="auto" class="${pref === "auto" ? "active" : ""}">Auto</button>
@@ -2348,6 +2602,7 @@ function render() {
     : v === "money" ? renderMoney(m)
     : v === "articles" ? renderArticles(m)
     : v === "habits" ? renderHabits(m)
+    : v === "gym" ? renderGym(m)
     : renderSettings();
   $("#view").innerHTML = html;
   $("#view").dataset.tab = state.studyDoc ? "study" : v;
@@ -2367,7 +2622,7 @@ function render() {
   $("#tabbar").dataset.active = v;
 
   /* the floating add button adds tasks on Today, habits on Habits (never over the reader) */
-  $("#fab").classList.toggle("hidden", state.studyDoc || (v !== "today" && v !== "habits" && v !== "indrive"));
+  $("#fab").classList.toggle("hidden", state.studyDoc || (v !== "today" && v !== "habits" && v !== "indrive" && v !== "gym"));
   $("#fab").dataset.tab = v;
   $("#fab").disabled = state.busy;
 
@@ -2545,6 +2800,34 @@ function render() {
       el.onclick = () => openIndriveSheet(el.dataset.indriveEdit);
     });
   }
+  if (v === "gym") {
+    document.querySelectorAll("[data-gym-edit]").forEach((el) => {
+      el.onclick = () => openGymSheet(el.dataset.gymEdit);
+    });
+    document.querySelectorAll("[data-bw-edit]").forEach((el) => {
+      el.onclick = () => { state.bwEdit = el.dataset.bwEdit; render(); };
+    });
+    const bwSave = $("#btn-bw-save");
+    if (bwSave) bwSave.onclick = () => {
+      const date = ($("#bw-date")?.value || "").trim();
+      const weight = num($("#bw-weight")?.value);
+      const notes = ($("#bw-notes")?.value || "").trim();
+      if (!date) { state.error = "Pick a date."; render(); return; }
+      if (weight == null) { state.error = "Enter your weight."; render(); return; }
+      setBodyweight(date, weight, notes);
+      state.bwEdit = null;
+      render();
+    };
+    const bwRemove = $("#btn-bw-remove");
+    if (bwRemove) bwRemove.onclick = () => {
+      if (!confirm(`Remove the ${state.bwEdit} weigh-in? This can't be undone.`)) return;
+      removeBodyweight(state.bwEdit);
+      state.bwEdit = null;
+      render();
+    };
+    const bwCancel = $("#btn-bw-cancel");
+    if (bwCancel) bwCancel.onclick = () => { state.bwEdit = null; render(); };
+  }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
       b.onclick = () => { state.article = b.dataset.article; state.articleReturn = null; showBars(); render(); scrollTo(0, 0); };
@@ -2572,6 +2855,8 @@ function render() {
     if (clr) clr.onclick = () => { state.articleQuery = ""; render(); const s = $("#art-search"); if (s) s.focus(); };
   }
   if (v === "settings") {
+    $("#btn-open-articles").onclick = () => goToTab("articles");
+    $("#btn-open-clients").onclick = () => goToTab("clients");
     document.querySelectorAll("[data-theme-pref]").forEach((b) => {
       b.onclick = () => setThemePref(b.dataset.themePref);
     });
@@ -2679,6 +2964,56 @@ function closeIndriveSheet() {
   state.indriveEditDate = null;
 }
 
+/* ---------- gym workout sheet ---------- */
+
+function buildGymExerciseRows(letter, prefill) {
+  const box = $("#gym-exercise-rows");
+  if (!box) return;
+  box.innerHTML = GYM_WORKOUTS[letter].map((e) => {
+    const p = prefill ? prefill.find((x) => x.exercise === e.name) : null;
+    return `
+    <div class="gym-ex-row" data-gym-ex="${esc(e.name)}">
+      <div class="gym-ex-name">${esc(e.name)} <span class="muted">${esc(e.target)}</span></div>
+      <input type="number" inputmode="decimal" class="gym-ex-weight" placeholder="kg" value="${p && p.weight != null ? esc(String(p.weight)) : ""}">
+      <input type="text" inputmode="numeric" class="gym-ex-reps" placeholder="reps" value="${p ? esc(p.reps) : ""}">
+    </div>`;
+  }).join("");
+}
+
+function pickGymWorkout(letter, prefill) {
+  state.gymWorkoutPick = letter;
+  document.querySelectorAll("#gym-workout-pick [data-gym-pick]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.gymPick === letter);
+  });
+  buildGymExerciseRows(letter, prefill);
+}
+
+function openGymSheet(editKey) {
+  if (state.busy) return;
+  state.gymEditKey = editKey || null;
+  const editing = !!editKey;
+  const m = buildModel();
+  let date = todayIso(), letter = (m.gym && m.gym.nextWorkout) || "A", prefill = null;
+  if (editing) {
+    const [d, w] = editKey.split("|");
+    date = d; letter = w;
+    const session = m.gym && m.gym.sessions.find((s) => s.date === d && s.workout === w);
+    prefill = session ? session.exercises : null;
+  }
+  $("#gym-sheet-title").textContent = editing ? "Edit session" : "Log workout";
+  $("#gym-date").value = date;
+  $("#gym-date").readOnly = editing;
+  $("#btn-gym-save").textContent = editing ? "Save changes" : "Save session";
+  $("#btn-gym-remove").classList.toggle("hidden", !editing);
+  pickGymWorkout(letter, prefill);
+  $("#gym-sheet").classList.remove("hidden");
+}
+function closeGymSheet() {
+  $("#gym-sheet").classList.add("hidden");
+  state.gymEditKey = null;
+  state.gymWorkoutPick = null;
+}
+
 /* ---------- boot ---------- */
 
 /* switch tabs from anywhere (tab bar, or a shortcut tile like the inDrive stat) */
@@ -2690,6 +3025,8 @@ function goToTab(view) {
   state.taskEdit = null;
   state.studyDoc = false;
   closeIndriveSheet();
+  closeGymSheet();
+  state.bwEdit = null;
   showBars();
   render();
   scrollTo(0, 0);
@@ -2725,6 +3062,7 @@ $("#fab").onclick = () => {
   bounceIcon($("#fab"));
   if (state.view === "habits") return openHabitModal();
   if (state.view === "indrive") return openIndriveSheet(null);
+  if (state.view === "gym") return openGymSheet(null);
   return openComposer();
 };
 $("#composer-cancel").onclick = closeComposer;
@@ -2769,6 +3107,38 @@ $("#btn-indrive-remove").onclick = () => {
   if (!confirm(`Remove the ${date} entry? This can't be undone.`)) return;
   removeIndriveEntry(date);
   closeIndriveSheet();
+  render();
+};
+
+$("#gym-sheet").onclick = (e) => { if (e.target.id === "gym-sheet") closeGymSheet(); };
+$("#btn-gym-cancel").onclick = closeGymSheet;
+document.querySelectorAll("#gym-workout-pick [data-gym-pick]").forEach((b) => {
+  b.onclick = () => {
+    if (state.gymEditKey) return; // A/B is locked while editing an existing session
+    pickGymWorkout(b.dataset.gymPick, null);
+  };
+});
+$("#btn-gym-save").onclick = () => {
+  const date = ($("#gym-date").value || "").trim();
+  const workout = state.gymWorkoutPick;
+  if (!date) { state.error = "Pick a date."; return render(); }
+  if (!workout) { state.error = "Pick Workout A or B."; return render(); }
+  const entries = [...document.querySelectorAll(".gym-ex-row")].map((row) => ({
+    exercise: row.dataset.gymEx,
+    weight: num(row.querySelector(".gym-ex-weight").value),
+    reps: row.querySelector(".gym-ex-reps").value.trim(),
+  })).filter((e) => e.weight !== null || e.reps !== "");
+  if (!entries.length) { state.error = "Log at least one exercise."; return render(); }
+  setGymSession(date, workout, entries);
+  closeGymSheet();
+  render();
+};
+$("#btn-gym-remove").onclick = () => {
+  if (!state.gymEditKey) return;
+  const [d, w] = state.gymEditKey.split("|");
+  if (!confirm(`Remove the ${d} Workout ${w} session? This can't be undone.`)) return;
+  removeGymSession(d, w);
+  closeGymSheet();
   render();
 };
 
