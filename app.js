@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v58";
+const APP_VERSION = "v59";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -347,6 +347,7 @@ async function gitBlobSha(text) {
 async function fetchRaw(path, { optional = false } = {}) {
   const res = await fetch(`${contentsUrl(path)}?ref=${BRANCH}`, {
     headers: { ...ghHeaders(), Accept: "application/vnd.github.raw+json" },
+    keepalive: true, // let an in-flight save survive a tab switch / navigation
   });
   if (res.status === 404 && optional) return null;
   if (res.status === 401 || res.status === 403) throw new Error("auth");
@@ -372,6 +373,7 @@ async function fetchTree() {
 async function fetchWithSha(path, { optional = false } = {}) {
   const res = await fetch(`${contentsUrl(path)}?ref=${BRANCH}`, {
     headers: { ...ghHeaders(), Accept: "application/vnd.github+json" },
+    keepalive: true,
   });
   if (res.status === 404 && optional) return null;
   if (res.status === 401 || res.status === 403) throw new Error("auth");
@@ -387,6 +389,7 @@ async function putFile(path, text, message, sha) {
     method: "PUT",
     headers: { ...ghHeaders(), Accept: "application/vnd.github+json", "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    keepalive: true, // the write itself must survive a tab switch / navigation, not just the read before it
   });
   if (res.status === 401 || res.status === 403) throw new Error("auth-write");
   if (res.status === 409 || res.status === 422) throw new Error("conflict");
@@ -409,11 +412,28 @@ const todayIso = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+/* forces every debounced save that's still waiting out its timer to write
+   right now instead — called before syncAll() overwrites state.files (so a
+   pending edit is never silently clobbered by the pre-edit server copy),
+   and on visibilitychange/pagehide (so backgrounding or refreshing the tab
+   doesn't just kill the timer and lose the edit outright) */
+async function flushAllPending() {
+  const jobs = [];
+  if (_dailyTimer) { clearTimeout(_dailyTimer); _dailyTimer = null; jobs.push(flushDaily()); }
+  if (_habitTimer) { clearTimeout(_habitTimer); _habitTimer = null; jobs.push(flushHabits()); }
+  if (_savingsTimer) { clearTimeout(_savingsTimer); _savingsTimer = null; jobs.push(flushSavings()); }
+  if (_debtTimer) { clearTimeout(_debtTimer); _debtTimer = null; jobs.push(flushDebts()); }
+  if (_transportTimer) { clearTimeout(_transportTimer); _transportTimer = null; jobs.push(flushTransport()); }
+  if (_indriveTimer) { clearTimeout(_indriveTimer); _indriveTimer = null; jobs.push(flushIndrive()); }
+  if (_gymTimer) { clearTimeout(_gymTimer); _gymTimer = null; jobs.push(flushGym()); }
+  await Promise.all(jobs);
+}
+
 async function syncAll() {
   if (!getToken()) return;
-  if (_dailyTimer) { clearTimeout(_dailyTimer); _dailyTimer = null; }
-  if (_habitTimer) { clearTimeout(_habitTimer); _habitTimer = null; }
-  if (_savingsTimer) { clearTimeout(_savingsTimer); _savingsTimer = null; }
+  /* write any pending edit before fetching "fresh" data, or that edit gets
+     silently overwritten by the pre-edit server copy we're about to pull in */
+  await flushAllPending();
   setSyncStatus("Syncing…");
   state.error = null;
   try {
@@ -3246,6 +3266,16 @@ if ("serviceWorker" in navigator) {
     });
   });
 }
+
+/* backgrounding, switching tabs, or refreshing kills any in-flight setTimeout
+   debounce outright — fire pending saves now (with keepalive: true on the
+   fetch calls) so the edit actually reaches GitHub instead of vanishing.
+   visibilitychange fires reliably on mobile (unlike beforeunload); pagehide
+   as a second net for desktop tab-close/navigation. */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushAllPending();
+});
+window.addEventListener("pagehide", () => flushAllPending());
 
 applyTheme();
 loadCache();
