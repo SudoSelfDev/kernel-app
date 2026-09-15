@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v55";
+const APP_VERSION = "v56";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -1853,6 +1853,7 @@ function removeGymSession(date, workout) {
 function renderToday(m) {
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
   const dis = state.busy ? "disabled" : "";
+  const gymToday = gymTodayLabel();
 
   const open = m.tasks ? m.tasks.filter((t) => !t.done).length : 0;
   const heroSub = m.tasks === null ? "No daily note yet"
@@ -1968,6 +1969,11 @@ function renderToday(m) {
     <h2>Tasks</h2>
     ${tasksHtml}
   </div>
+
+  <button class="card duo-tile" id="btn-gym-open" title="Open Gym">
+    <h2>🏋️ Gym ${icon("chevronRight", 13)}</h2>
+    <p class="muted gym-status" style="margin:2px 0 0">${gymToday.kind === "lift" ? `Lift — Workout ${(m.gym && m.gym.nextWorkout) || "A"} suggested` : gymToday.label}</p>
+  </button>
 
   <div class="duo">
     ${m.study ? `
@@ -2165,7 +2171,7 @@ function renderGym(m) {
   const heroCard = `
     <div class="card">
       <h2>🏋️ Gym</h2>
-      <p class="muted review-note">${today.kind === "lift" ? `Today — Lift (Workout ${esc(g.nextWorkout)} suggested)` : `Today — ${esc(today.label)}`}</p>
+      <p class="muted gym-status">${today.kind === "lift" ? `Today — Lift (Workout ${esc(g.nextWorkout)} suggested)` : `Today — ${esc(today.label)}`}</p>
       ${today.kind === "lift" ? `<p class="muted" style="font-size:0.72rem;margin-top:2px">Suggests whichever workout you didn't do last, so A/B stay balanced.</p>` : ""}
     </div>`;
 
@@ -2669,6 +2675,8 @@ function render() {
     if (studyOpen) studyOpen.onclick = () => { state.studyDoc = true; showBars(); render(); scrollTo(0, 0); };
     const indriveOpen = $("#btn-indrive-open");
     if (indriveOpen) indriveOpen.onclick = () => goToTab("indrive");
+    const gymOpen = $("#btn-gym-open");
+    if (gymOpen) gymOpen.onclick = () => goToTab("gym");
 
     const tpl = transportPlan(m);
     if (tpl) {

@@ -765,6 +765,9 @@ button.duo-tile:active { background: var(--surface2); }
 
 /* Sunday review checklist */
 .review-note { font-size: 0.74rem; line-height: 1.4; margin-bottom: 8px; }
+/* gym today-status line — reused on both the Gym tab hero and the Today tile,
+   a notch bigger than .review-note since it's the headline of the card */
+.gym-status { font-size: 0.95rem; line-height: 1.4; margin-bottom: 4px; color: var(--text); }
 .review-item {
   display: flex; align-items: flex-start; gap: 10px;
   width: 100%; padding: 9px 4px; text-align: left;
