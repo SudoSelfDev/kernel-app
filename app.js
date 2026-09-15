@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v54";
+const APP_VERSION = "v55";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -2219,7 +2219,7 @@ function renderGym(m) {
       <p class="muted" style="font-size:0.72rem;margin-top:10px">Hit protein first, every day. Reassess every 2-3 weeks based on the weekly-average trend, not daily fluctuation. <b>Ankle:</b> avoid jumping, sprinting, sharp pivots — swap to the listed alternative if anything causes sharp pain.</p>
     </div>`;
 
-  return heroCard + sessionsCard + bwCard + workoutRef("A") + workoutRef("B") + nutritionCard;
+  return heroCard + nutritionCard + workoutRef("A") + workoutRef("B") + sessionsCard + bwCard;
 }
 
 function renderClients(m) {
