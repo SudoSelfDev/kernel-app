@@ -1,4 +1,5 @@
 :root, html[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #0d1117;
   --surface: #161b22;
   --surface2: #1f2630;
@@ -29,6 +30,7 @@
 }
 
 html[data-theme="light"] {
+  color-scheme: light;
   --bg: #f6f8fa;
   --surface: #ffffff;
   --surface2: #eef1f4;
@@ -402,10 +404,13 @@ body.bars-hidden #fab-secondary { transform: translateY(160px); opacity: 0; }
 }
 .seg button.active { color: var(--text); background: var(--surface2); border-color: var(--muted); }
 
-input[type="password"], input[type="text"], input[type="search"], input[type="number"] {
+input[type="password"], input[type="text"], input[type="search"], input[type="number"], input[type="date"] {
   width: 100%; background: var(--surface2); color: var(--text);
   border: 1px solid var(--border); border-radius: 10px;
-  padding: 11px 12px; font-size: 0.95rem;
+  padding: 11px 12px; font-size: 0.95rem; font-family: inherit;
+  /* color-scheme (set per-theme below) makes the native calendar icon/popup
+     render in dark or light chrome instead of always defaulting to light */
+  color-scheme: inherit;
 }
 input:focus { outline: 1px solid var(--accent); }
 input::placeholder { color: var(--muted); }
