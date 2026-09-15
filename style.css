@@ -331,7 +331,9 @@ body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
    above it (smaller, so the main "log workout" action still reads as primary). */
 #fab-secondary {
   position: fixed; z-index: 11;
-  right: max(20px, calc(50% - 248px));
+  /* centered on #fab: same right formula shifted by (54-42)/2=6px so the two
+     buttons' horizontal centers line up despite the different diameters */
+  right: max(22px, calc(50% - 246px));
   bottom: calc(env(safe-area-inset-bottom) + 88px + 54px + 12px);
   width: 42px; height: 42px; border-radius: 50%;
   background: var(--accent); color: var(--btn-fg);
