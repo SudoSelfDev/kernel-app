@@ -325,6 +325,28 @@ body.bars-hidden #tabbar {
 }
 body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
 
+/* secondary FAB — log weight, gym tab only. Same column as #fab, stacked
+   above it (smaller, so the main "log workout" action still reads as primary). */
+#fab-secondary {
+  position: fixed; z-index: 11;
+  right: max(20px, calc(50% - 248px));
+  bottom: calc(env(safe-area-inset-bottom) + 88px + 54px + 12px);
+  width: 42px; height: 42px; border-radius: 50%;
+  background: var(--accent); color: var(--btn-fg);
+  border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+#fab-secondary.hidden { display: none; }
+#fab-secondary[disabled] { opacity: 0.6; }
+#fab-secondary:active { transform: scale(0.9); }
+#fab-secondary[data-tab="gym"] {
+  background: var(--hue-gym);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35), 0 0 14px 1px color-mix(in srgb, var(--hue-gym) 50%, transparent);
+}
+body.bars-hidden #fab-secondary { transform: translateY(160px); opacity: 0; }
+
 /* task composer + inDrive entry sheets — animated open/close.
    Kept in the layout (no display:none) so opacity/transform can transition;
    pointer-events is what actually keeps a hidden sheet from intercepting taps. */
@@ -359,6 +381,7 @@ body.bars-hidden #fab { transform: translateY(160px); opacity: 0; }
 .sheet-backdrop.center.hidden .sheet { transform: translateY(16px) scale(0.96); }
 #btn-indrive-remove.hidden { display: none; }
 #btn-gym-remove.hidden { display: none; }
+#btn-bw-remove.hidden { display: none; }
 .sheet h3 { font-size: 1rem; }
 .sheet p { font-size: 0.78rem; }
 .sheet textarea {

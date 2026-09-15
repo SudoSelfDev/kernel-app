@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v53";
+const APP_VERSION = "v54";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -52,7 +52,7 @@ const state = {
   indriveEditDate: null, // date (YYYY-MM-DD) of the row open in the add/edit sheet, or null for a new entry
   gymEditKey: null, // "date|workout" of the session open in the gym sheet, or null for a new session
   gymWorkoutPick: null, // "A" | "B" chosen in the currently-open gym sheet (before save)
-  bwEdit: null, // date of the bodyweight row being edited inline, or null
+  bwEdit: null, // date of the bodyweight row open in the log/edit sheet, or null for a new entry
   habitPop: null, // name of the habit whose checkbox should play the pop-in animation on this render, or null
 };
 
@@ -247,6 +247,7 @@ const ICONS = {
   checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.27"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>',
   dumbbell: '<path d="M6.5 6.5v11M17.5 6.5v11M2 9.5v5M22 9.5v5M6.5 12h11"/>',
+  scale: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/>',
 };
 
 /* inDrive's real mark — a rounded square in their brand green ("Inch Worm",
@@ -2160,7 +2161,6 @@ function gymTodayLabel() {
 function renderGym(m) {
   const g = m.gym || { bodyweights: [], sessions: [], lastWorkout: null, nextWorkout: "A", lastBodyweight: null };
   const today = gymTodayLabel();
-  const dis = state.busy ? "disabled" : "";
 
   const heroCard = `
     <div class="card">
@@ -2169,25 +2169,15 @@ function renderGym(m) {
       ${today.kind === "lift" ? `<p class="muted" style="font-size:0.72rem;margin-top:2px">Suggests whichever workout you didn't do last, so A/B stay balanced.</p>` : ""}
     </div>`;
 
-  const bwEditRow = state.bwEdit ? g.bodyweights.find((b) => b.date === state.bwEdit) : null;
   const bwCard = `
     <div class="card">
       <h2>Bodyweight ${g.lastBodyweight ? `<span class="chip ok">${g.lastBodyweight.weight} kg</span>` : ""}</h2>
-      <p class="muted review-note">${g.lastBodyweight ? `Last weighed ${esc(g.lastBodyweight.date)}${g.lastBodyweight.notes ? " · " + esc(g.lastBodyweight.notes) : ""}.` : "Weigh in 2-3x/week — track the trend, not day-to-day noise."}</p>
-      <label class="rv-label">Date</label>
-      <input type="date" id="bw-date" value="${esc(state.bwEdit || todayIso())}" ${state.bwEdit ? "readonly" : ""}>
-      <label class="rv-label">Weight (kg)</label>
-      <input type="number" inputmode="decimal" id="bw-weight" placeholder="70" value="${bwEditRow ? esc(String(bwEditRow.weight)) : ""}">
-      <label class="rv-label">Notes <span class="muted">· optional</span></label>
-      <input type="text" id="bw-notes" placeholder="" value="${bwEditRow ? esc(bwEditRow.notes) : ""}">
-      <div style="height:10px"></div>
-      <button class="btn" id="btn-bw-save" ${dis}>${state.bwEdit ? "Save changes" : "Log weight"}</button>
-      ${state.bwEdit ? `<button class="show-toggle danger" id="btn-bw-remove" ${dis}>Remove entry</button><button class="show-toggle" id="btn-bw-cancel">Cancel</button>` : ""}
+      <p class="muted review-note">${g.lastBodyweight ? `Last weighed ${esc(g.lastBodyweight.date)}${g.lastBodyweight.notes ? " · " + esc(g.lastBodyweight.notes) : ""}.` : "Weigh in 2-3x/week — track the trend, not day-to-day noise. Tap the small button above + to log."}</p>
       ${g.bodyweights.length ? g.bodyweights.slice(0, 5).map((b) => `
         <div class="row" data-bw-edit="${esc(b.date)}">
           <div class="r-main"><div class="r-title">${esc(b.date)}</div>${b.notes ? `<div class="r-sub">${esc(b.notes)}</div>` : ""}</div>
           <div class="r-end"><b>${b.weight}</b> <span class="muted">kg</span></div>
-        </div>`).join("") : ""}
+        </div>`).join("") : `<div class="empty">Nothing logged yet</div>`}
     </div>`;
 
   const sessionsCard = `
@@ -2229,7 +2219,7 @@ function renderGym(m) {
       <p class="muted" style="font-size:0.72rem;margin-top:10px">Hit protein first, every day. Reassess every 2-3 weeks based on the weekly-average trend, not daily fluctuation. <b>Ankle:</b> avoid jumping, sprinting, sharp pivots — swap to the listed alternative if anything causes sharp pain.</p>
     </div>`;
 
-  return heroCard + bwCard + sessionsCard + workoutRef("A") + workoutRef("B") + nutritionCard;
+  return heroCard + sessionsCard + bwCard + workoutRef("A") + workoutRef("B") + nutritionCard;
 }
 
 function renderClients(m) {
@@ -2619,7 +2609,7 @@ function renderSetup() {
 function render() {
   setSyncStatus();
   applyTheme();
-  if (!getToken()) { $("#fab").classList.add("hidden"); renderSetup(); return; }
+  if (!getToken()) { $("#fab").classList.add("hidden"); $("#fab-secondary").classList.add("hidden"); renderSetup(); return; }
 
   const m = buildModel();
   const v = state.view;
@@ -2655,6 +2645,11 @@ function render() {
   $("#fab").classList.toggle("hidden", state.studyDoc || (v !== "today" && v !== "habits" && v !== "indrive" && v !== "gym"));
   $("#fab").dataset.tab = v;
   $("#fab").disabled = state.busy;
+
+  /* smaller secondary FAB (log weight) sits above the main one, gym tab only */
+  $("#fab-secondary").classList.toggle("hidden", state.studyDoc || v !== "gym");
+  $("#fab-secondary").dataset.tab = v;
+  $("#fab-secondary").disabled = state.busy;
 
   if (v === "today" && !state.studyDoc) {
     document.querySelectorAll(".task[data-line]").forEach((b) => {
@@ -2839,28 +2834,8 @@ function render() {
       bindLongPress(el, () => { bounceIcon(el); openHowTo(letter, Number(i)); });
     });
     document.querySelectorAll("[data-bw-edit]").forEach((el) => {
-      el.onclick = () => { state.bwEdit = el.dataset.bwEdit; render(); };
+      el.onclick = () => openBwSheet(el.dataset.bwEdit);
     });
-    const bwSave = $("#btn-bw-save");
-    if (bwSave) bwSave.onclick = () => {
-      const date = ($("#bw-date")?.value || "").trim();
-      const weight = num($("#bw-weight")?.value);
-      const notes = ($("#bw-notes")?.value || "").trim();
-      if (!date) { state.error = "Pick a date."; render(); return; }
-      if (weight == null) { state.error = "Enter your weight."; render(); return; }
-      setBodyweight(date, weight, notes);
-      state.bwEdit = null;
-      render();
-    };
-    const bwRemove = $("#btn-bw-remove");
-    if (bwRemove) bwRemove.onclick = () => {
-      if (!confirm(`Remove the ${state.bwEdit} weigh-in? This can't be undone.`)) return;
-      removeBodyweight(state.bwEdit);
-      state.bwEdit = null;
-      render();
-    };
-    const bwCancel = $("#btn-bw-cancel");
-    if (bwCancel) bwCancel.onclick = () => { state.bwEdit = null; render(); };
   }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
@@ -3061,6 +3036,29 @@ function closeHowTo() {
   $("#howto-sheet").classList.add("hidden");
 }
 
+/* ---------- bodyweight sheet ---------- */
+
+function openBwSheet(editDate) {
+  if (state.busy) return;
+  state.bwEdit = editDate || null;
+  const editing = !!editDate;
+  const m = buildModel();
+  const ex = editing && m.gym ? m.gym.bodyweights.find((b) => b.date === editDate) : null;
+  $("#bw-sheet-title").textContent = editing ? "Edit weigh-in" : "Log weight";
+  $("#bw-date").value = ex ? ex.date : todayIso();
+  $("#bw-date").readOnly = editing;
+  $("#bw-weight").value = ex ? String(ex.weight) : "";
+  $("#bw-notes").value = ex ? ex.notes : "";
+  $("#btn-bw-save").textContent = editing ? "Save changes" : "Log weight";
+  $("#btn-bw-remove").classList.toggle("hidden", !editing);
+  $("#bw-sheet").classList.remove("hidden");
+  $("#bw-weight").focus();
+}
+function closeBwSheet() {
+  $("#bw-sheet").classList.add("hidden");
+  state.bwEdit = null;
+}
+
 /* ---------- boot ---------- */
 
 /* switch tabs from anywhere (tab bar, or a shortcut tile like the inDrive stat) */
@@ -3074,7 +3072,7 @@ function goToTab(view) {
   closeIndriveSheet();
   closeGymSheet();
   closeHowTo();
-  state.bwEdit = null;
+  closeBwSheet();
   showBars();
   render();
   scrollTo(0, 0);
@@ -3112,6 +3110,11 @@ $("#fab").onclick = () => {
   if (state.view === "indrive") return openIndriveSheet(null);
   if (state.view === "gym") return openGymSheet(null);
   return openComposer();
+};
+$("#fab-secondary").innerHTML = icon("scale", 18);
+$("#fab-secondary").onclick = () => {
+  bounceIcon($("#fab-secondary"));
+  if (state.view === "gym") openBwSheet(null);
 };
 $("#composer-cancel").onclick = closeComposer;
 $("#composer").onclick = (e) => { if (e.target.id === "composer") closeComposer(); };
@@ -3192,6 +3195,26 @@ $("#btn-gym-remove").onclick = () => {
 
 $("#howto-sheet").onclick = (e) => { if (e.target.id === "howto-sheet") closeHowTo(); };
 $("#btn-howto-close").onclick = closeHowTo;
+
+$("#bw-sheet").onclick = (e) => { if (e.target.id === "bw-sheet") closeBwSheet(); };
+$("#btn-bw-cancel").onclick = closeBwSheet;
+$("#btn-bw-save").onclick = () => {
+  const date = ($("#bw-date").value || "").trim();
+  const weight = num($("#bw-weight").value);
+  const notes = ($("#bw-notes").value || "").trim();
+  if (!date) { state.error = "Pick a date."; return render(); }
+  if (weight == null) { state.error = "Enter your weight."; return render(); }
+  setBodyweight(date, weight, notes);
+  closeBwSheet();
+  render();
+};
+$("#btn-bw-remove").onclick = () => {
+  const date = state.bwEdit;
+  if (!confirm(`Remove the ${date} weigh-in? This can't be undone.`)) return;
+  removeBodyweight(date);
+  closeBwSheet();
+  render();
+};
 
 /* Service worker with auto-update: when a new version activates it takes control
    and we reload once so the freshest code shows without a manual hard-refresh. */

@@ -18,7 +18,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="style.css?v=53">
+  <link rel="stylesheet" href="style.css?v=54">
 </head>
 <body>
   <header id="topbar">
@@ -31,6 +31,7 @@
   <main id="view" class="view"></main>
 
   <button id="fab" class="hidden" aria-label="Add tasks"></button>
+  <button id="fab-secondary" class="hidden" aria-label="Log weight"></button>
 
   <div id="composer" class="sheet-backdrop center hidden">
     <div class="sheet">
@@ -96,6 +97,23 @@
     </div>
   </div>
 
+  <div id="bw-sheet" class="sheet-backdrop center hidden">
+    <div class="sheet">
+      <h3 id="bw-sheet-title">Log weight</h3>
+      <label class="rv-label">Date</label>
+      <input type="date" id="bw-date">
+      <label class="rv-label">Weight (kg)</label>
+      <input type="number" inputmode="decimal" id="bw-weight" placeholder="70">
+      <label class="rv-label">Notes <span class="muted">· optional</span></label>
+      <input type="text" id="bw-notes" placeholder="">
+      <div class="sheet-actions">
+        <button class="btn secondary" id="btn-bw-cancel">Cancel</button>
+        <button class="btn" id="btn-bw-save">Log weight</button>
+      </div>
+      <button class="show-toggle danger hidden" id="btn-bw-remove">Remove entry</button>
+    </div>
+  </div>
+
   <div id="howto-sheet" class="sheet-backdrop center hidden">
     <div class="sheet">
       <h3 id="howto-title">How to</h3>
@@ -116,6 +134,6 @@
     <button data-view="indrive" data-icon="indrive" class="tab"><span class="ticon"></span>inDrive</button>
   </nav>
 
-  <script src="app.js?v=53"></script>
+  <script src="app.js?v=54"></script>
 </body>
 </html>
