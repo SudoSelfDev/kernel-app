@@ -18,7 +18,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="style.css?v=52">
+  <link rel="stylesheet" href="style.css?v=53">
 </head>
 <body>
   <header id="topbar">
@@ -96,6 +96,16 @@
     </div>
   </div>
 
+  <div id="howto-sheet" class="sheet-backdrop center hidden">
+    <div class="sheet">
+      <h3 id="howto-title">How to</h3>
+      <p id="howto-body" class="muted" style="font-size:0.88rem;line-height:1.5"></p>
+      <div class="sheet-actions">
+        <button class="btn" id="btn-howto-close">Got it</button>
+      </div>
+    </div>
+  </div>
+
   <div id="client-sheet" class="sheet-backdrop hidden"></div>
 
   <nav id="tabbar">
@@ -106,6 +116,6 @@
     <button data-view="indrive" data-icon="indrive" class="tab"><span class="ticon"></span>inDrive</button>
   </nav>
 
-  <script src="app.js?v=52"></script>
+  <script src="app.js?v=53"></script>
 </body>
 </html>

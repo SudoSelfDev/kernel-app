@@ -732,6 +732,14 @@ button.duo-tile:active { background: var(--surface2); }
   font-size: 0.85rem; text-align: center; font-family: inherit;
 }
 
+/* gym tab: reference rows respond to a long-press (how-to) — suppress the
+   native text-selection/callout that a sustained touch would otherwise show */
+.gym-ref-row {
+  cursor: pointer; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+  touch-action: manipulation; border-radius: 10px; transition: background 0.15s ease;
+}
+.gym-ref-row:active { background: var(--surface2); }
+
 /* Sunday review checklist */
 .review-note { font-size: 0.74rem; line-height: 1.4; margin-bottom: 8px; }
 .review-item {

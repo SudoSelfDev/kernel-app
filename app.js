@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v52";
+const APP_VERSION = "v53";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -121,20 +121,32 @@ const TAB_ORDER = ["today", "habits", "money", "gym", "indrive"];
    plan exactly; if the plan changes, update both this and training-plan.md. */
 const GYM_WORKOUTS = {
   A: [
-    { name: "Goblet Squat", alt: "Leg Press if ankle unhappy", target: "3 x 10-12" },
-    { name: "Flat Bench Press", target: "3 x 8-10" },
-    { name: "Seated Cable Row", target: "3 x 10-12" },
-    { name: "Dumbbell Shoulder Press", target: "3 x 10-12" },
-    { name: "Romanian Deadlift", target: "3 x 10" },
-    { name: "Plank", target: "3 x 30-45s", isTimed: true },
+    { name: "Goblet Squat", alt: "Leg Press if ankle unhappy", target: "3 x 10-12", emoji: "🏋️",
+      how: "Hold a dumbbell vertically at your chest. Feet shoulder-width, toes slightly out. Sit back and down, chest up, knees tracking over toes. Go as deep as comfortable, then drive up through your heels." },
+    { name: "Flat Bench Press", target: "3 x 8-10", emoji: "💪",
+      how: "Lie on the bench, feet flat on the floor, shoulder blades pulled back and down. Lower the bar/dumbbells to chest level with control, then press up until arms are extended without locking out hard." },
+    { name: "Seated Cable Row", target: "3 x 10-12", emoji: "🚣",
+      how: "Sit tall, knees slightly bent, grab the handle with arms extended. Pull to your torso by driving elbows back and squeezing shoulder blades together, then extend back out with control." },
+    { name: "Dumbbell Shoulder Press", target: "3 x 10-12", emoji: "🙆",
+      how: "Sit or stand with dumbbells at shoulder height, palms forward. Press straight overhead until arms are extended, then lower back to shoulder height with control. Keep your core braced." },
+    { name: "Romanian Deadlift", target: "3 x 10", emoji: "🦵",
+      how: "Hold the weight in front of your thighs. Hinge at the hips, pushing them back while keeping a slight knee bend and a flat back. Lower until you feel a stretch in your hamstrings, then drive hips forward to stand." },
+    { name: "Plank", target: "3 x 30-45s", isTimed: true, emoji: "🧘",
+      how: "Forearms and toes on the floor, body in a straight line from head to heels. Brace your core and squeeze your glutes — don't let your hips sag or pike up. Breathe steadily and hold." },
   ],
   B: [
-    { name: "Leg Press", alt: "Bulgarian Split Squat if ankle allows", target: "3 x 10-12" },
-    { name: "Lat Pulldown", target: "3 x 10-12" },
-    { name: "Incline Dumbbell Press", target: "3 x 10-12" },
-    { name: "Dumbbell Row", target: "3 x 10-12" },
-    { name: "Seated Calf Raise", target: "3 x 12-15" },
-    { name: "Cable Face Pull", target: "3 x 12-15" },
+    { name: "Leg Press", alt: "Bulgarian Split Squat if ankle allows", target: "3 x 10-12", emoji: "🦿",
+      how: "Sit in the machine, feet shoulder-width on the platform. Lower the weight by bending your knees toward your chest, then press through your heels to extend — don't lock your knees out hard at the top." },
+    { name: "Lat Pulldown", target: "3 x 10-12", emoji: "⬇️",
+      how: "Sit tall, grab the bar wider than shoulder-width. Pull it down to your upper chest by driving your elbows down and back, squeezing your lats, then let it rise back up with control." },
+    { name: "Incline Dumbbell Press", target: "3 x 10-12", emoji: "📐",
+      how: "On an incline bench (~30-45°), press dumbbells up from shoulder height until arms are extended, then lower back down with control. Keep your shoulder blades pulled back." },
+    { name: "Dumbbell Row", target: "3 x 10-12", emoji: "🚣",
+      how: "Support one knee and hand on a bench, back flat. Pull the dumbbell up toward your hip, driving your elbow back, then lower with control. Keep your torso still — the pull comes from your back, not momentum." },
+    { name: "Seated Calf Raise", target: "3 x 12-15", emoji: "🦶",
+      how: "Sit with the balls of your feet on the platform, knees bent. Lower your heels for a stretch, then press up onto your toes as high as you can. Small range, controlled tempo." },
+    { name: "Cable Face Pull", target: "3 x 12-15", emoji: "🎯",
+      how: "Set the cable at head height. Pull the rope toward your face, leading with your elbows high and out, squeezing your shoulder blades together at the end. Keep it light — this is about control, not weight." },
   ],
 };
 /* Mon/Wed/Fri lift, Tue/Sat swim, Thu/Sun rest — day index from Date#getDay() */
@@ -195,6 +207,23 @@ function bounceIcon(el) {
     ],
     { duration: 420, easing: "cubic-bezier(.34,1.56,.64,1)" },
   );
+}
+
+/* fires onLongPress after a sustained press; cancels on release/move-away/scroll
+   so it doesn't fire alongside a normal tap or during a scroll gesture */
+function bindLongPress(el, onLongPress, delay = 500) {
+  let timer = null, fired = false;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  el.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    fired = false;
+    cancel();
+    timer = setTimeout(() => { fired = true; onLongPress(e); }, delay);
+  });
+  el.addEventListener("pointerup", cancel);
+  el.addEventListener("pointerleave", cancel);
+  el.addEventListener("pointercancel", cancel);
+  el.addEventListener("contextmenu", (e) => { if (fired) e.preventDefault(); });
 }
 
 /* ---------- icons (feather-style, stroke = currentColor) ---------- */
@@ -2180,9 +2209,10 @@ function renderGym(m) {
   const workoutRef = (letter) => `
     <div class="card">
       <h2>Workout ${letter}</h2>
-      ${GYM_WORKOUTS[letter].map((e) => `
-        <div class="row">
-          <div class="r-main"><div class="r-title">${esc(e.name)}</div>${e.alt ? `<div class="r-sub">or ${esc(e.alt)}</div>` : ""}</div>
+      <p class="muted" style="font-size:0.72rem;margin-top:-4px;margin-bottom:2px">Hold an exercise for how-to.</p>
+      ${GYM_WORKOUTS[letter].map((e, i) => `
+        <div class="row gym-ref-row" data-gym-how="${letter}:${i}">
+          <div class="r-main"><div class="r-title">${e.emoji ? `${e.emoji} ` : ""}${esc(e.name)}</div>${e.alt ? `<div class="r-sub">or ${esc(e.alt)}</div>` : ""}</div>
           <div class="r-end muted">${esc(e.target)}</div>
         </div>`).join("")}
     </div>`;
@@ -2804,6 +2834,10 @@ function render() {
     document.querySelectorAll("[data-gym-edit]").forEach((el) => {
       el.onclick = () => openGymSheet(el.dataset.gymEdit);
     });
+    document.querySelectorAll("[data-gym-how]").forEach((el) => {
+      const [letter, i] = el.dataset.gymHow.split(":");
+      bindLongPress(el, () => { bounceIcon(el); openHowTo(letter, Number(i)); });
+    });
     document.querySelectorAll("[data-bw-edit]").forEach((el) => {
       el.onclick = () => { state.bwEdit = el.dataset.bwEdit; render(); };
     });
@@ -2973,7 +3007,7 @@ function buildGymExerciseRows(letter, prefill) {
     const p = prefill ? prefill.find((x) => x.exercise === e.name) : null;
     return `
     <div class="gym-ex-row" data-gym-ex="${esc(e.name)}">
-      <div class="gym-ex-name">${esc(e.name)} <span class="muted">${esc(e.target)}</span></div>
+      <div class="gym-ex-name">${e.emoji ? `${e.emoji} ` : ""}${esc(e.name)} <span class="muted">${esc(e.target)}</span></div>
       <input type="number" inputmode="decimal" class="gym-ex-weight" placeholder="kg" value="${p && p.weight != null ? esc(String(p.weight)) : ""}">
       <input type="text" inputmode="numeric" class="gym-ex-reps" placeholder="reps" value="${p ? esc(p.reps) : ""}">
     </div>`;
@@ -3014,6 +3048,19 @@ function closeGymSheet() {
   state.gymWorkoutPick = null;
 }
 
+/* ---------- gym "how to" popup (long-press an exercise) ---------- */
+
+function openHowTo(letter, i) {
+  const e = GYM_WORKOUTS[letter] && GYM_WORKOUTS[letter][i];
+  if (!e) return;
+  $("#howto-title").textContent = `${e.emoji ? e.emoji + " " : ""}${e.name}`;
+  $("#howto-body").textContent = e.how || "No form notes for this one yet.";
+  $("#howto-sheet").classList.remove("hidden");
+}
+function closeHowTo() {
+  $("#howto-sheet").classList.add("hidden");
+}
+
 /* ---------- boot ---------- */
 
 /* switch tabs from anywhere (tab bar, or a shortcut tile like the inDrive stat) */
@@ -3026,6 +3073,7 @@ function goToTab(view) {
   state.studyDoc = false;
   closeIndriveSheet();
   closeGymSheet();
+  closeHowTo();
   state.bwEdit = null;
   showBars();
   render();
@@ -3141,6 +3189,9 @@ $("#btn-gym-remove").onclick = () => {
   closeGymSheet();
   render();
 };
+
+$("#howto-sheet").onclick = (e) => { if (e.target.id === "howto-sheet") closeHowTo(); };
+$("#btn-howto-close").onclick = closeHowTo;
 
 /* Service worker with auto-update: when a new version activates it takes control
    and we reload once so the freshest code shows without a manual hard-refresh. */
