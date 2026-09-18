@@ -749,8 +749,18 @@ button.duo-tile:active { background: var(--surface2); }
 .ms-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; }
 .ms-row span:first-child { color: var(--muted); }
 
-/* gym tab: 2x2 nutrition-target grid, reusing .mg-cell/.mg-val/.mg-lbl styling */
-.gym-nutri-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* gym tab: plain tips list on the Tips for Success card */
+.gym-tips { margin: 4px 0 0; padding-left: 18px; font-size: 0.82rem; line-height: 1.7; color: var(--text); }
+.gym-tips li { margin-bottom: 2px; }
+
+/* full-plan image lightbox — tap anywhere to close */
+.plan-lightbox { align-items: center; justify-content: center; padding: 20px; cursor: zoom-out; }
+.plan-lightbox img {
+  max-width: 100%; max-height: 100%;
+  border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  transform: scale(1); transition: transform 0.28s cubic-bezier(.34, 1.15, .4, 1);
+}
+.plan-lightbox.hidden img { transform: scale(0.94); }
 
 /* gym tab: one row per exercise in the log sheet — name/target grows, two compact inputs beside it */
 .gym-ex-row { display: flex; align-items: center; gap: 8px; }

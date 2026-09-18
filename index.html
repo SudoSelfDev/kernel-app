@@ -18,7 +18,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="style.css?v=59">
+  <link rel="stylesheet" href="style.css?v=60">
 </head>
 <body>
   <header id="topbar">
@@ -83,8 +83,8 @@
     <div class="sheet">
       <h3 id="gym-sheet-title">Log workout</h3>
       <div class="seg" id="gym-workout-pick">
-        <button type="button" data-gym-pick="A">Workout A</button>
-        <button type="button" data-gym-pick="B">Workout B</button>
+        <button type="button" data-gym-pick="UPPER">Upper Body</button>
+        <button type="button" data-gym-pick="LEGS">Legs Day</button>
       </div>
       <label class="rv-label">Date</label>
       <input type="date" id="gym-date">
@@ -126,6 +126,10 @@
 
   <div id="client-sheet" class="sheet-backdrop hidden"></div>
 
+  <div id="plan-lightbox" class="sheet-backdrop hidden plan-lightbox">
+    <img src="assets/gym-plan.webp" alt="Weekly workout plan and schedule">
+  </div>
+
   <nav id="tabbar">
     <button data-view="today" data-icon="sun" class="tab active"><span class="ticon"></span>Today</button>
     <button data-view="habits" data-icon="checkCircle" class="tab"><span class="ticon"></span>Habits</button>
@@ -134,6 +138,6 @@
     <button data-view="indrive" data-icon="indrive" class="tab"><span class="ticon"></span>inDrive</button>
   </nav>
 
-  <script src="app.js?v=59"></script>
+  <script src="app.js?v=60"></script>
 </body>
 </html>

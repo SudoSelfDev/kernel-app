@@ -4,7 +4,7 @@
 "use strict";
 
 /* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v59";
+const APP_VERSION = "v60";
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -51,7 +51,7 @@ const state = {
   transportWeek: null, // 7-day strip on the transport card: null = auto, true/false = user choice
   indriveEditDate: null, // date (YYYY-MM-DD) of the row open in the add/edit sheet, or null for a new entry
   gymEditKey: null, // "date|workout" of the session open in the gym sheet, or null for a new session
-  gymWorkoutPick: null, // "A" | "B" chosen in the currently-open gym sheet (before save)
+  gymWorkoutPick: null, // "UPPER" | "LEGS" chosen in the currently-open gym sheet (before save)
   bwEdit: null, // date of the bodyweight row open in the log/edit sheet, or null for a new entry
   habitPop: null, // name of the habit whose checkbox should play the pop-in animation on this render, or null
 };
@@ -116,49 +116,60 @@ const habitRingOffset = (done, total) => (total ? HABIT_RING_C * (1 - done / tot
    direction, like flipping through pages rather than just cutting */
 const TAB_ORDER = ["today", "habits", "money", "gym", "indrive"];
 
-/* Full-Body Recomposition Program — 10_Projects/Fitness/training-plan.md.
+/* Weight-loss program (100kg → 85kg) — 10_Projects/Fitness/training-plan.md.
    Hardcoded (not vault-parsed) so the logging form's fields always match the
-   plan exactly; if the plan changes, update both this and training-plan.md. */
+   plan exactly; if the plan changes, update both this and training-plan.md.
+   Replaced the original Full-Body Recomposition A/B split 2026-09-18 — see
+   assets/gym-plan.webp for the source plan image (viewable in-app from the
+   Gym tab hero card). */
 const GYM_WORKOUTS = {
-  A: [
-    { name: "Goblet Squat", alt: "Leg Press if ankle unhappy", target: "3 x 10-12", emoji: "🏋️",
-      how: "Hold a dumbbell vertically at your chest. Feet shoulder-width, toes slightly out. Sit back and down, chest up, knees tracking over toes. Go as deep as comfortable, then drive up through your heels." },
-    { name: "Flat Bench Press", target: "3 x 8-10", emoji: "💪",
-      how: "Lie on the bench, feet flat on the floor, shoulder blades pulled back and down. Lower the bar/dumbbells to chest level with control, then press up until arms are extended without locking out hard." },
-    { name: "Seated Cable Row", target: "3 x 10-12", emoji: "🚣",
-      how: "Sit tall, knees slightly bent, grab the handle with arms extended. Pull to your torso by driving elbows back and squeezing shoulder blades together, then extend back out with control." },
-    { name: "Dumbbell Shoulder Press", target: "3 x 10-12", emoji: "🙆",
-      how: "Sit or stand with dumbbells at shoulder height, palms forward. Press straight overhead until arms are extended, then lower back to shoulder height with control. Keep your core braced." },
-    { name: "Romanian Deadlift", target: "3 x 10", emoji: "🦵",
-      how: "Hold the weight in front of your thighs. Hinge at the hips, pushing them back while keeping a slight knee bend and a flat back. Lower until you feel a stretch in your hamstrings, then drive hips forward to stand." },
-    { name: "Plank", target: "3 x 30-45s", isTimed: true, emoji: "🧘",
-      how: "Forearms and toes on the floor, body in a straight line from head to heels. Brace your core and squeeze your glutes — don't let your hips sag or pike up. Breathe steadily and hold." },
+  UPPER: [
+    { name: "Warm-Up — Treadmill", target: "10 min", isTimed: true, emoji: "🚶",
+      how: "Speed 4-6 km/h, incline 0-3%. Keep a comfortable pace — this is just to get your body warm and ready, not a workout in itself." },
+    { name: "Chest Press Machine", target: "3 x 10 (light)", emoji: "💪",
+      how: "Back flat on the pad, grips at chest height. Push forward until arms are extended without locking out hard, then control the return — don't let the weight stack slam." },
+    { name: "Lat Pulldown", target: "3 x 10 (light)", emoji: "⬇️",
+      how: "Sit tall, grab the bar wider than shoulder-width. Pull it down to your upper chest, keeping your back straight and squeezing your shoulder blades together, then let it rise back up with control." },
+    { name: "Shoulder Press Machine", target: "3 x 10 (light)", emoji: "🙆",
+      how: "Back flat on the pad, grips at shoulder height. Push up without locking your elbows, then lower back to shoulder height with control. Keep your core tight." },
+    { name: "Biceps Curl", alt: "Machine or Dumbbells", target: "2 x 12", emoji: "💪",
+      how: "Keep your elbows close to your body throughout. Curl with a controlled movement, no swinging or using your back to heave the weight up." },
+    { name: "Triceps Push Down", alt: "Cable Machine", target: "2 x 12", emoji: "🔽",
+      how: "Elbows tucked in close to your sides, stay fixed. Push the handle down fully, then control the return — don't let your elbows drift forward." },
+    { name: "Finisher — Bike", target: "25 min", isTimed: true, emoji: "🚴",
+      how: "Comfortable, steady resistance and rhythm. Breathe and stay consistent for the full 25 minutes rather than pushing hard and fading early." },
   ],
-  B: [
-    { name: "Leg Press", alt: "Bulgarian Split Squat if ankle allows", target: "3 x 10-12", emoji: "🦿",
-      how: "Sit in the machine, feet shoulder-width on the platform. Lower the weight by bending your knees toward your chest, then press through your heels to extend — don't lock your knees out hard at the top." },
-    { name: "Lat Pulldown", target: "3 x 10-12", emoji: "⬇️",
-      how: "Sit tall, grab the bar wider than shoulder-width. Pull it down to your upper chest by driving your elbows down and back, squeezing your lats, then let it rise back up with control." },
-    { name: "Incline Dumbbell Press", target: "3 x 10-12", emoji: "📐",
-      how: "On an incline bench (~30-45°), press dumbbells up from shoulder height until arms are extended, then lower back down with control. Keep your shoulder blades pulled back." },
-    { name: "Dumbbell Row", target: "3 x 10-12", emoji: "🚣",
-      how: "Support one knee and hand on a bench, back flat. Pull the dumbbell up toward your hip, driving your elbow back, then lower with control. Keep your torso still — the pull comes from your back, not momentum." },
-    { name: "Seated Calf Raise", target: "3 x 12-15", emoji: "🦶",
-      how: "Sit with the balls of your feet on the platform, knees bent. Lower your heels for a stretch, then press up onto your toes as high as you can. Small range, controlled tempo." },
-    { name: "Cable Face Pull", target: "3 x 12-15", emoji: "🎯",
-      how: "Set the cable at head height. Pull the rope toward your face, leading with your elbows high and out, squeezing your shoulder blades together at the end. Keep it light — this is about control, not weight." },
+  LEGS: [
+    { name: "Warm-Up — Bike", target: "15 min", isTimed: true, emoji: "🚴",
+      how: "Moderate pace, light resistance — get your legs warm before the working sets." },
+    { name: "Leg Press", target: "3 x 10-12", emoji: "🦿",
+      how: "Back on the pad, feet shoulder-width on the platform. Don't lock your knees out hard at the top, and control the lowering phase rather than dropping the weight." },
+    { name: "Seated Leg Curl", target: "3 x 10-12", emoji: "🦵",
+      how: "Keep your hips down on the pad. Curl the weight in slowly, squeeze at the top, then control the return — don't let momentum do the work." },
+    { name: "Leg Extension", target: "2 x 12-15", emoji: "🦿",
+      how: "Back on the pad. Extend until your legs are almost straight (don't lock out hard), pause briefly, then control the return." },
+    { name: "Calf Raises", target: "2 x 12-15", emoji: "🦶",
+      how: "Full range of motion — a real stretch at the bottom, a real pause at the top. Control the descent rather than bouncing." },
+    { name: "Finisher — Walking (incline)", target: "30 min, 2% incline", isTimed: true, emoji: "🚶",
+      how: "Speed 4-6 km/h at a 2% incline. Keep a steady pace for the full 30 minutes." },
   ],
 };
-/* Mon/Wed/Fri lift, Tue/Sat swim, Thu/Sun rest — day index from Date#getDay() */
+const WORKOUT_LABELS = { UPPER: "Upper Body", LEGS: "Legs Day" };
+/* Weekly schedule — day index from Date#getDay() (0=Sun). Mon/Fri: upper body
+   (same session repeated); Wed: legs; Tue/Thu: optional walk; Sat: light run;
+   Sun: full day off. */
 const GYM_SCHEDULE = {
-  0: { kind: "rest", label: "Full rest" },
-  1: { kind: "lift", label: "Lift" },
-  2: { kind: "swim", label: "Swim (30-40 min)" },
-  3: { kind: "lift", label: "Lift" },
-  4: { kind: "rest", label: "Rest or light walk" },
-  5: { kind: "lift", label: "Lift" },
-  6: { kind: "swim", label: "Swim (30-45 min) or rest" },
+  0: { kind: "rest", label: "Day off" },
+  1: { kind: "lift", label: "Upper Body + Bike (50-60 min)", workout: "UPPER" },
+  2: { kind: "walk", label: "Day off or 1h fast walk (optional)" },
+  3: { kind: "lift", label: "Legs Day + Walk (60-75 min)", workout: "LEGS" },
+  4: { kind: "walk", label: "30 min fast walk (optional)" },
+  5: { kind: "lift", label: "Upper Body + Bike (50-60 min)", workout: "UPPER" },
+  6: { kind: "run", label: "Light run (15 min)" },
 };
+/* the goal from the plan image — used to show weight-loss progress against
+   the Bodyweight log the Gym tab already tracks */
+const GYM_GOAL = { startKg: 100, targetKg: 85 };
 let _lastViewKey = null;
 
 /* #view's whole innerHTML is replaced on every render (no virtual-DOM diff),
@@ -1350,10 +1361,8 @@ function buildModel() {
     });
     const sessions = [...sessionMap.values()].sort((a, b) => b.date.localeCompare(a.date));
     const lastSession = sessions[0] || null;
-    const lastWorkout = lastSession ? lastSession.workout : null;
-    const nextWorkout = lastWorkout === "A" ? "B" : "A";
 
-    m.gym = { bodyweights, sessions, lastSession, lastWorkout, nextWorkout, lastBodyweight: bodyweights[0] || null };
+    m.gym = { bodyweights, sessions, lastSession, lastBodyweight: bodyweights[0] || null };
   }
 
   if (f.daily && typeof f.daily.text === "string") {
@@ -1992,7 +2001,7 @@ function renderToday(m) {
 
   <button class="card duo-tile" id="btn-gym-open" title="Open Gym">
     <h2>🏋️ Gym ${icon("chevronRight", 13)}</h2>
-    <p class="muted gym-status" style="margin:2px 0 0">${gymToday.kind === "lift" ? `Lift — Workout ${(m.gym && m.gym.nextWorkout) || "A"} suggested` : gymToday.label}</p>
+    <p class="muted gym-status" style="margin:2px 0 0">${gymToday.kind === "lift" ? WORKOUT_LABELS[gymToday.workout] : gymToday.label}</p>
   </button>
 
   <div class="duo">
@@ -2185,14 +2194,25 @@ function gymTodayLabel() {
 }
 
 function renderGym(m) {
-  const g = m.gym || { bodyweights: [], sessions: [], lastWorkout: null, nextWorkout: "A", lastBodyweight: null };
+  const g = m.gym || { bodyweights: [], sessions: [], lastBodyweight: null };
   const today = gymTodayLabel();
+
+  /* weight-loss goal progress (100kg → 85kg), driven by the Bodyweight log
+     that's already tracked here — no separate goal-entry UI needed */
+  const cur = g.lastBodyweight ? g.lastBodyweight.weight : GYM_GOAL.startKg;
+  const span = GYM_GOAL.startKg - GYM_GOAL.targetKg;
+  const goalPct = Math.max(0, Math.min(100, ((GYM_GOAL.startKg - cur) / span) * 100));
+  const goalBar = `
+      <div class="bar" style="margin-top:10px"><div style="width:${goalPct}%"></div></div>
+      <div class="bar-sub"><span>${cur} / ${GYM_GOAL.targetKg} kg</span><span>${goalPct.toFixed(0)}% to goal</span></div>`;
 
   const heroCard = `
     <div class="card">
       <h2>🏋️ Gym</h2>
-      <p class="muted gym-status">${today.kind === "lift" ? `Today — Lift (Workout ${esc(g.nextWorkout)} suggested)` : `Today — ${esc(today.label)}`}</p>
-      ${today.kind === "lift" ? `<p class="muted" style="font-size:0.72rem;margin-top:2px">Suggests whichever workout you didn't do last, so A/B stay balanced.</p>` : ""}
+      <p class="muted gym-status">${today.kind === "lift" ? `Today — ${WORKOUT_LABELS[today.workout]}` : `Today — ${esc(today.label)}`}</p>
+      <p class="muted" style="font-size:0.72rem;margin-top:2px">Goal: ${GYM_GOAL.startKg}kg → ${GYM_GOAL.targetKg}kg</p>
+      ${goalBar}
+      <button class="show-toggle" id="btn-gym-plan">📋 View full weekly plan</button>
     </div>`;
 
   const bwCard = `
@@ -2212,7 +2232,7 @@ function renderGym(m) {
       ${g.sessions.length ? g.sessions.slice(0, 8).map((s) => `
         <div class="row" data-gym-edit="${esc(s.date)}|${esc(s.workout)}">
           <div class="r-main">
-            <div class="r-title">${esc(s.date)} · Workout ${esc(s.workout)}</div>
+            <div class="r-title">${esc(s.date)} · ${esc(WORKOUT_LABELS[s.workout] || s.workout)}</div>
             <div class="r-sub">${s.exercises.map((e) => {
               const w = e.weight != null ? `${e.weight}kg` : "";
               const parts = [w, e.reps ? esc(e.reps) : ""].filter(Boolean);
@@ -2224,7 +2244,7 @@ function renderGym(m) {
 
   const workoutRef = (letter) => `
     <div class="card">
-      <h2>Workout ${letter}</h2>
+      <h2>${esc(WORKOUT_LABELS[letter])}</h2>
       <p class="muted" style="font-size:0.72rem;margin-top:-4px;margin-bottom:2px">Hold an exercise for how-to.</p>
       ${GYM_WORKOUTS[letter].map((e, i) => `
         <div class="row gym-ref-row" data-gym-how="${letter}:${i}">
@@ -2233,19 +2253,20 @@ function renderGym(m) {
         </div>`).join("")}
     </div>`;
 
-  const nutritionCard = `
+  const tipsCard = `
     <div class="card">
-      <h2>Nutrition Targets</h2>
-      <div class="gym-nutri-grid">
-        <div class="mg-cell"><div class="mg-val">2100-2200</div><div class="mg-lbl">kcal/day</div></div>
-        <div class="mg-cell"><div class="mg-val">150g</div><div class="mg-lbl">protein</div></div>
-        <div class="mg-cell"><div class="mg-val">70g</div><div class="mg-lbl">fat</div></div>
-        <div class="mg-cell"><div class="mg-val">220g</div><div class="mg-lbl">carbs</div></div>
-      </div>
-      <p class="muted" style="font-size:0.72rem;margin-top:10px">Hit protein first, every day. Reassess every 2-3 weeks based on the weekly-average trend, not daily fluctuation. <b>Ankle:</b> avoid jumping, sprinting, sharp pivots — swap to the listed alternative if anything causes sharp pain.</p>
+      <h2>Tips for Success</h2>
+      <ul class="gym-tips">
+        <li>Stay in a calorie deficit — healthy eating + portion control</li>
+        <li>Drink 2-3 liters of water daily</li>
+        <li>Get 7-8 hours of sleep</li>
+        <li>Be consistent, not perfect</li>
+        <li>Track your progress — weight, measurements, how you feel</li>
+        <li>Adjust the plan if needed</li>
+      </ul>
     </div>`;
 
-  return heroCard + nutritionCard + workoutRef("A") + workoutRef("B") + sessionsCard + bwCard;
+  return heroCard + tipsCard + workoutRef("UPPER") + workoutRef("LEGS") + sessionsCard + bwCard;
 }
 
 function renderClients(m) {
@@ -2864,6 +2885,8 @@ function render() {
     document.querySelectorAll("[data-bw-edit]").forEach((el) => {
       el.onclick = () => openBwSheet(el.dataset.bwEdit);
     });
+    const planOpen = $("#btn-gym-plan");
+    if (planOpen) planOpen.onclick = openPlanImage;
   }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
@@ -3029,11 +3052,11 @@ function openGymSheet(editKey) {
   if (state.busy) return;
   state.gymEditKey = editKey || null;
   const editing = !!editKey;
-  const m = buildModel();
-  let date = todayIso(), letter = (m.gym && m.gym.nextWorkout) || "A", prefill = null;
+  let date = todayIso(), letter = gymTodayLabel().workout || "UPPER", prefill = null;
   if (editing) {
     const [d, w] = editKey.split("|");
     date = d; letter = w;
+    const m = buildModel();
     const session = m.gym && m.gym.sessions.find((s) => s.date === d && s.workout === w);
     prefill = session ? session.exercises : null;
   }
@@ -3062,6 +3085,15 @@ function openHowTo(letter, i) {
 }
 function closeHowTo() {
   $("#howto-sheet").classList.add("hidden");
+}
+
+/* ---------- full plan image lightbox ---------- */
+
+function openPlanImage() {
+  $("#plan-lightbox").classList.remove("hidden");
+}
+function closePlanImage() {
+  $("#plan-lightbox").classList.add("hidden");
 }
 
 /* ---------- bodyweight sheet ---------- */
@@ -3101,6 +3133,7 @@ function goToTab(view) {
   closeGymSheet();
   closeHowTo();
   closeBwSheet();
+  closePlanImage();
   showBars();
   render();
   scrollTo(0, 0);
@@ -3193,7 +3226,7 @@ $("#gym-sheet").onclick = (e) => { if (e.target.id === "gym-sheet") closeGymShee
 $("#btn-gym-cancel").onclick = closeGymSheet;
 document.querySelectorAll("#gym-workout-pick [data-gym-pick]").forEach((b) => {
   b.onclick = () => {
-    if (state.gymEditKey) return; // A/B is locked while editing an existing session
+    if (state.gymEditKey) return; // workout choice is locked while editing an existing session
     pickGymWorkout(b.dataset.gymPick, null);
   };
 });
@@ -3201,7 +3234,7 @@ $("#btn-gym-save").onclick = () => {
   const date = ($("#gym-date").value || "").trim();
   const workout = state.gymWorkoutPick;
   if (!date) { state.error = "Pick a date."; return render(); }
-  if (!workout) { state.error = "Pick Workout A or B."; return render(); }
+  if (!workout) { state.error = "Pick Upper Body or Legs Day."; return render(); }
   const entries = [...document.querySelectorAll(".gym-ex-row")].map((row) => ({
     exercise: row.dataset.gymEx,
     weight: num(row.querySelector(".gym-ex-weight").value),
@@ -3215,7 +3248,7 @@ $("#btn-gym-save").onclick = () => {
 $("#btn-gym-remove").onclick = () => {
   if (!state.gymEditKey) return;
   const [d, w] = state.gymEditKey.split("|");
-  if (!confirm(`Remove the ${d} Workout ${w} session? This can't be undone.`)) return;
+  if (!confirm(`Remove the ${d} ${WORKOUT_LABELS[w] || w} session? This can't be undone.`)) return;
   removeGymSession(d, w);
   closeGymSheet();
   render();
@@ -3223,6 +3256,8 @@ $("#btn-gym-remove").onclick = () => {
 
 $("#howto-sheet").onclick = (e) => { if (e.target.id === "howto-sheet") closeHowTo(); };
 $("#btn-howto-close").onclick = closeHowTo;
+
+$("#plan-lightbox").onclick = closePlanImage;
 
 $("#bw-sheet").onclick = (e) => { if (e.target.id === "bw-sheet") closeBwSheet(); };
 $("#btn-bw-cancel").onclick = closeBwSheet;
