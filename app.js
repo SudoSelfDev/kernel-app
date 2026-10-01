@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "65";
+const WEB_VERSION = "66";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -2104,8 +2104,7 @@ function renderToday(m) {
           : `Next booking: ${esc(pending[0].short)} · ${esc(tp.cutoff)}`;
       actions = `
         <div class="tr-actions">
-          <a class="btn" id="btn-tr-open" href="${esc(tp.site)}" target="_blank" rel="noopener">Open booking site${icon("ext", 16)}</a>
-          <button class="btn secondary" id="btn-tr-book-all" ${trDis}>${multi ? `Mark ${pending.length} booked` : "Mark booked"}</button>
+          <button class="btn" id="btn-tr-book-all" ${trDis}>${multi ? `Mark ${pending.length} booked` : "Mark booked"}</button>
         </div>
         <button class="ghost sm tr-foot" id="btn-tr-off-all" ${trDis}>${multi ? "Days off" : "Day off"} →</button>`;
     } else if (tp.targets.length) {
@@ -2137,7 +2136,8 @@ function renderToday(m) {
       </div>`;
 
     transportCard = `<div class="card transport">
-      <div class="tr-head">${icon("bus", 16)}<span class="kicker">Office transport</span><span style="margin-left:auto">${chip}</span></div>
+      <div class="tr-head">${icon("bus", 16)}<span class="kicker">Office transport</span><span style="margin-left:auto">${chip}</span>
+        <a class="tr-site" id="btn-tr-open" href="${esc(tp.site)}" target="_blank" rel="noopener" title="Open booking site" aria-label="Open booking site">${icon("ext", 16)}</a></div>
       <p class="tr-line${loud ? "" : " quiet"}">${sub}</p>
       ${strip}
       ${actions}
