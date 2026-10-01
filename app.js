@@ -3,8 +3,10 @@
    M1.6: task removal, schedule, articles reader, auto-hiding bars */
 "use strict";
 
-/* keep in sync with the CACHE version in sw.js on every release */
-const APP_VERSION = "v60";
+/* real version: the Android build reports its versionName (1.0.<build>); the web build
+   (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
+const WEB_VERSION = "65";
+const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
 const REPO = "kernel-vault";
@@ -30,11 +32,12 @@ const LS_CACHE = "kernel_cache_v3";
 const LS_THEME = "kernel_theme"; // "auto" | "dark" | "light"
 
 const state = {
-  view: "today",
+  view: ["today", "habits", "money", "gym", "articles", "indrive"].includes(new URLSearchParams(location.search).get("tab")) ? new URLSearchParams(location.search).get("tab") : "today",
   clientTab: "active",
   openClient: null,   // "tab:index" of the expanded client row, or null
   scriptsOpen: false, // DM Scripts card collapsed by default
   article: null,      // name of the open article, or null for the list
+  articleTag: "",     // Read-tab category chip filter ("" = All)
   articleQuery: "",   // Read-tab search filter
   files: {},          // clients/savings/debts/study/schedule: raw · daily: {text, sha}|null · articles: [{name, text}]
   lastSync: null,
@@ -53,7 +56,11 @@ const state = {
   gymEditKey: null, // "date|workout" of the session open in the gym sheet, or null for a new session
   gymWorkoutPick: null, // "UPPER" | "LEGS" chosen in the currently-open gym sheet (before save)
   bwEdit: null, // date of the bodyweight row open in the log/edit sheet, or null for a new entry
+  tasksAll: false, // show every Today task instead of the first few
+  health: null, // Samsung Health / Health Connect snapshot (native Android build only)
   habitPop: null, // name of the habit whose checkbox should play the pop-in animation on this render, or null
+  settingsFrom: null, // tab that opened Settings — its back link returns there
+  subFrom: null, // view that opened inDrive / Clients — their back links return there
 };
 
 /* ---------- confetti ---------- */
@@ -64,7 +71,7 @@ function launchConfetti() {
   canvas.width = innerWidth; canvas.height = innerHeight;
   document.body.appendChild(canvas);
   const ctx = canvas.getContext("2d");
-  const colors = ["#4ade80","#fbbf24","#60a5fa","#f87171","#a78bfa","#fb923c","#34d399"];
+  const colors = ["#ff8a3d","#a98bff","#3ddc84","#ff5c7c","#5b9bff","#a7e92f"];
   const W = canvas.width, H = canvas.height;
   const pieces = [];
   /* two poppers fire up from the bottom corners and fan toward the middle */
@@ -106,7 +113,9 @@ const SAVE_DELAY = 2000;
 
 /* habits ring geometry — shared between renderHabits (draws it) and the
    click handler (animates it), so the two never drift apart */
-const HABIT_RING_R = 34;
+const HABIT_RING_SIZE = 128;
+const HABIT_RING_STROKE = 12;
+const HABIT_RING_R = (HABIT_RING_SIZE - HABIT_RING_STROKE) / 2;
 const HABIT_RING_C = 2 * Math.PI * HABIT_RING_R;
 const habitRingOffset = (done, total) => (total ? HABIT_RING_C * (1 - done / total) : HABIT_RING_C);
 
@@ -114,7 +123,7 @@ const habitRingOffset = (done, total) => (total ? HABIT_RING_C * (1 - done / tot
 
 /* left-to-right order of the tab bar — lets a view swap pick a slide
    direction, like flipping through pages rather than just cutting */
-const TAB_ORDER = ["today", "habits", "money", "gym", "indrive"];
+const TAB_ORDER = ["today", "habits", "money", "gym", "articles"];
 
 /* Weight-loss program (100kg → 85kg) — 10_Projects/Fitness/training-plan.md.
    Hardcoded (not vault-parsed) so the logging form's fields always match the
@@ -124,33 +133,33 @@ const TAB_ORDER = ["today", "habits", "money", "gym", "indrive"];
    Gym tab hero card). */
 const GYM_WORKOUTS = {
   UPPER: [
-    { name: "Warm-Up — Treadmill", target: "10 min", isTimed: true, emoji: "🚶",
+    { name: "Warm-Up — Treadmill", target: "10 min", isTimed: true,
       how: "Speed 4-6 km/h, incline 0-3%. Keep a comfortable pace — this is just to get your body warm and ready, not a workout in itself." },
-    { name: "Chest Press Machine", target: "3 x 10 (light)", emoji: "💪",
+    { name: "Chest Press Machine", target: "3 x 10 (light)",
       how: "Back flat on the pad, grips at chest height. Push forward until arms are extended without locking out hard, then control the return — don't let the weight stack slam." },
-    { name: "Lat Pulldown", target: "3 x 10 (light)", emoji: "⬇️",
+    { name: "Lat Pulldown", target: "3 x 10 (light)",
       how: "Sit tall, grab the bar wider than shoulder-width. Pull it down to your upper chest, keeping your back straight and squeezing your shoulder blades together, then let it rise back up with control." },
-    { name: "Shoulder Press Machine", target: "3 x 10 (light)", emoji: "🙆",
+    { name: "Shoulder Press Machine", target: "3 x 10 (light)",
       how: "Back flat on the pad, grips at shoulder height. Push up without locking your elbows, then lower back to shoulder height with control. Keep your core tight." },
-    { name: "Biceps Curl", alt: "Machine or Dumbbells", target: "2 x 12", emoji: "💪",
+    { name: "Biceps Curl", alt: "Machine or Dumbbells", target: "2 x 12",
       how: "Keep your elbows close to your body throughout. Curl with a controlled movement, no swinging or using your back to heave the weight up." },
-    { name: "Triceps Push Down", alt: "Cable Machine", target: "2 x 12", emoji: "🔽",
+    { name: "Triceps Push Down", alt: "Cable Machine", target: "2 x 12",
       how: "Elbows tucked in close to your sides, stay fixed. Push the handle down fully, then control the return — don't let your elbows drift forward." },
-    { name: "Finisher — Bike", target: "25 min", isTimed: true, emoji: "🚴",
+    { name: "Finisher — Bike", target: "25 min", isTimed: true,
       how: "Comfortable, steady resistance and rhythm. Breathe and stay consistent for the full 25 minutes rather than pushing hard and fading early." },
   ],
   LEGS: [
-    { name: "Warm-Up — Bike", target: "15 min", isTimed: true, emoji: "🚴",
+    { name: "Warm-Up — Bike", target: "15 min", isTimed: true,
       how: "Moderate pace, light resistance — get your legs warm before the working sets." },
-    { name: "Leg Press", target: "3 x 10-12", emoji: "🦿",
+    { name: "Leg Press", target: "3 x 10-12",
       how: "Back on the pad, feet shoulder-width on the platform. Don't lock your knees out hard at the top, and control the lowering phase rather than dropping the weight." },
-    { name: "Seated Leg Curl", target: "3 x 10-12", emoji: "🦵",
+    { name: "Seated Leg Curl", target: "3 x 10-12",
       how: "Keep your hips down on the pad. Curl the weight in slowly, squeeze at the top, then control the return — don't let momentum do the work." },
-    { name: "Leg Extension", target: "2 x 12-15", emoji: "🦿",
+    { name: "Leg Extension", target: "2 x 12-15",
       how: "Back on the pad. Extend until your legs are almost straight (don't lock out hard), pause briefly, then control the return." },
-    { name: "Calf Raises", target: "2 x 12-15", emoji: "🦶",
+    { name: "Calf Raises", target: "2 x 12-15",
       how: "Full range of motion — a real stretch at the bottom, a real pause at the top. Control the descent rather than bouncing." },
-    { name: "Finisher — Walking (incline)", target: "30 min, 2% incline", isTimed: true, emoji: "🚶",
+    { name: "Finisher — Walking (incline)", target: "30 min, 2% incline", isTimed: true,
       how: "Speed 4-6 km/h at a 2% incline. Keep a steady pace for the full 30 minutes." },
   ],
 };
@@ -237,44 +246,45 @@ function bindLongPress(el, onLongPress, delay = 500) {
   el.addEventListener("contextmenu", (e) => { if (fired) e.preventDefault(); });
 }
 
-/* ---------- icons (feather-style, stroke = currentColor) ---------- */
+/* ---------- icons (Lucide-style, stroke = currentColor) ---------- */
 
 const ICONS = {
-  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
-  moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
-  users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
-  card: '<rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/>',
-  book: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
-  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>',
-  x: '<path d="M18 6L6 18M6 6l12 12"/>',
-  pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
-  chevronLeft: '<polyline points="15 18 9 12 15 6"/>',
-  chevronRight: '<polyline points="9 18 15 12 9 6"/>',
-  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
-  check: '<polyline points="20 6 9 17 4 12"/>',
-  phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
-  chevronDown: '<polyline points="6 9 12 15 18 9"/>',
-  checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.27"/>',
-  search: '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>',
-  dumbbell: '<path d="M6.5 6.5v11M17.5 6.5v11M2 9.5v5M22 9.5v5M6.5 12h11"/>',
-  scale: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/>',
+  plus: "M5 12h14 M12 5v14",
+  check: "M20 6 9 17l-5-5",
+  x: "M18 6 6 18 M6 6l12 12",
+  pencil: "M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z",
+  sun: "M8 12a4 4 0 1 0 8 0 4 4 0 1 0-8 0 M12 2v2 M12 20v2 M4.93 4.93l1.41 1.41 M17.66 17.66l1.41 1.41 M2 12h2 M20 12h2 M6.34 17.66l-1.41 1.41 M19.07 4.93l-1.41 1.41",
+  moon: "M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z",
+  sliders: "M10 5H3 M12 19H3 M14 3v4 M16 17v4 M21 12h-9 M21 19h-5 M21 5h-3 M8 10v4 M8 12H3",
+  chevr: "m9 18 6-6-6-6",
+  chevl: "m15 18-6-6 6-6",
+  chevd: "m6 9 6 6 6-6",
+  back: "m12 19-7-7 7-7 M19 12H5",
+  dumbbell: "m6.5 6.5 11 11 M21 21l-1-1 M3 3l1 1 M18 22l4-4 M2 6l4-4 M3 10l7-7 M14 21l7-7",
+  book: "M12 7v14 M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z",
+  checksq: "m9 11 3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
+  flame: "M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z",
+  wallet: "M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1 M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4",
+  droplet: "M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z",
+  activity: "M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2",
+  car: "M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2 M7 17h10 M5 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0 M15 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0",
+  bus: "M8 6v6 M15 6v6 M2 12h19.6 M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 0 0-2 2v10h3 M9 18h5 M5 18a2 2 0 1 0 4 0 2 2 0 1 0-4 0 M14 18a2 2 0 1 0 4 0 2 2 0 1 0-4 0",
+  copy: "M8 10a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2z M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",
+  phone: "M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z",
+  search: "M21 21l-4.34-4.34 M3 11a8 8 0 1 0 16 0 8 8 0 1 0-16 0",
+  ext: "M15 3h6v6 M10 14 21 3 M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
+  trash: "M3 6h18 M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6 M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2",
+  bell: "M10.27 21a2 2 0 0 0 3.46 0 M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.41 13.96 18 12.5 18 8A6 6 0 0 0 6 8c0 4.5-1.41 5.96-2.74 7.33",
+  refresh: "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8 M21 3v5h-5",
+  alert: "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z M12 9v4 M12 17h.01",
+  cloud: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z",
+  lock: "M5 11h14v10H5z M8 11V7a4 4 0 0 1 8 0v4",
+  scale: "M12 3v18 M5 21h14 M3 7h18 M6 7l-3 7a3 3 0 0 0 6 0z M18 7l-3 7a3 3 0 0 0 6 0z",
+  walk: "M13 4a1 1 0 1 0 2 0 1 1 0 1 0-2 0 M8 21l3-7 M11 14l-3-3 3-4 3 3 3 1 M14 10l1 11",
 };
 
-/* inDrive's real mark — a rounded square in their brand green ("Inch Worm",
-   #A7E92F) with an "i" merging into a "D", per their brand guide. Filled/
-   colored rather than a stroke=currentColor outline like the rest of the
-   set, so it reads as the actual inDrive icon rather than another line glyph. */
-const INDRIVE_ICON =
-  '<rect x="1" y="1" width="22" height="22" rx="6.5" fill="#A7E92F"/>' +
-  '<circle cx="8" cy="6.2" r="1.5" fill="#12210a"/>' +
-  '<path d="M8 9.5V18" stroke="#12210a" stroke-width="2.3" stroke-linecap="round"/>' +
-  '<path d="M8 9.5c7 0 9.5 2 9.5 4.5S15 18 8 18" fill="none" stroke="#12210a" stroke-width="2.3" stroke-linecap="round"/>';
-
-const icon = (name, size = 20) => {
-  if (name === "indrive") return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true">${INDRIVE_ICON}</svg>`;
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
-};
+const icon = (name, size = 20, stroke = 2) =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ICONS.plus}"/></svg>`;
 
 /* ---------- theme ---------- */
 
@@ -289,9 +299,9 @@ function effectiveTheme() {
 function applyTheme() {
   const t = effectiveTheme();
   document.documentElement.dataset.theme = t;
-  document.querySelector('meta[name="theme-color"]').content = t === "light" ? "#f6f8fa" : "#0d1117";
+  document.querySelector('meta[name="theme-color"]').content = t === "light" ? "#f6f4f1" : "#0e0d0c";
   const btn = $("#btn-theme");
-  if (btn) btn.innerHTML = icon(t === "light" ? "moon" : "sun", 18);
+  if (btn) btn.innerHTML = icon(t === "light" ? "moon" : "sun", 20);
 }
 
 function setThemePref(pref) {
@@ -533,15 +543,20 @@ function toggleTask(lineIdx) {
   applyDailyChange(lines.join("\n"));
 }
 
-function removeTask(lineIdx) {
+async function removeTask(lineIdx) {
   const d = state.files.daily;
   if (!d || state.busy) return;
-  const lines = d.text.split("\n");
-  const t = (lines[lineIdx] || "").trim();
+  const t = (d.text.split("\n")[lineIdx] || "").trim();
   if (!/^- \[[ xX]\]/.test(t)) return;
-  const label = t.replace(/^- \[[ xX]\]\s*/, "");
-  if (!confirm(`Remove "${label}"?`)) return;
+  const label = t.replace(/^- \[[ xX]\]\s*/, "").replace(/\[\[([^\]|]+)\|?([^\]]*)\]\]/g, (_, a, b) => b || a);
+  if (!(await confirmBox("Remove task?", `"${label}" is deleted from today's note.`))) return;
+  /* re-read after the prompt — a sync may have landed while it was open */
+  const cur = state.files.daily;
+  if (!cur || state.busy) return;
+  const lines = cur.text.split("\n");
+  if ((lines[lineIdx] || "").trim() !== t) return;
   lines.splice(lineIdx, 1);
+  state.taskEdit = null;
   applyDailyChange(lines.join("\n"));
 }
 
@@ -1439,9 +1454,10 @@ function buildModel() {
         name: a.name,
         path: a.path,
         title,
-        created: fm.created || "",
+        created: String(fm.created || "").replace(/^[:\s]+/, ""),
         topic: fm.topic || "",
         author: fm.author || "",
+        tags: frontmatterTags(a.text).filter((t) => t.toLowerCase() !== "research"),
         minutes: Math.max(1, Math.round(words / 200)),
         excerpt: para ? (para.length > 160 ? para.slice(0, 160).trimEnd() + "…" : para) : "",
         body,
@@ -1484,11 +1500,11 @@ function copySwap(iconEl, size, text) {
 }
 
 function expiryChip(days) {
-  if (days === null) return `<span class="chip dim">no date</span>`;
-  if (days < 0) return `<span class="chip bad">expired ${-days}d ago</span>`;
-  if (days <= 7) return `<span class="chip bad">${days}d left</span>`;
-  if (days <= 30) return `<span class="chip warn">${days}d left</span>`;
-  return `<span class="chip ok">${days}d left</span>`;
+  if (days === null) return `<span class="chip dim">No date</span>`;
+  if (days < 0) return `<span class="chip bad">Expired ${-days} d ago</span>`;
+  if (days <= 7) return `<span class="chip bad">Expires in ${days} d</span>`;
+  if (days <= 30) return `<span class="chip warn">Expires in ${days} d</span>`;
+  return `<span class="chip ok">Expires in ${days} d</span>`;
 }
 
 /* treat em-dash / blank as "no value" */
@@ -1526,7 +1542,7 @@ function cdField(label, value, mono) {
   return `<button class="cd-row" data-copy="${esc(v)}">
     <span class="cd-k">${esc(label)}</span>
     <span class="cd-v${mono ? " mono" : ""}">${esc(v)}</span>
-    <span class="cd-ic">${icon("copy", 14)}</span>
+    <span class="cd-ic">${icon("copy", 16)}</span>
   </button>`;
 }
 
@@ -1548,7 +1564,7 @@ function linkifyTaskText(text, articles) {
     const label = (m[2] || m[1]).trim();
     const art = resolveArticle(m[1], articles);
     out += art
-      ? `<span class="task-link" data-article-link="${esc(art.path)}">${esc(label)} ${icon("book", 12)}</span>`
+      ? `<span class="task-link" data-article-link="${esc(art.path)}">${esc(label)}</span>`
       : `<span class="wikilink">${esc(label)}</span>`;
     last = re.lastIndex;
   }
@@ -1780,6 +1796,128 @@ function removeIndriveEntry(date) {
   applyIndriveChange(lines.join("\n"));
 }
 
+
+/* ---------- Samsung Health via Health Connect (native Android build only) ---------- */
+
+const HAS_HEALTH = typeof window.KernelNative !== "undefined" && typeof window.KernelNative.healthSync === "function";
+const LS_HEALTH = "kernel_health";
+try { state.health = JSON.parse(localStorage.getItem(LS_HEALTH) || "null"); } catch { state.health = null; }
+const HEALTH_MSG = {
+  unavailable: "Health Connect isn't available on this phone.",
+  install: "Install or update Health Connect from the Play Store, then try again.",
+  denied: "Permission denied. Open Health Connect → App permissions → Kernel and allow Steps, Weight and Exercise.",
+};
+
+function healthSyncNow() {
+  if (!HAS_HEALTH) return;
+  state.health = { ...(state.health || {}), busy: true, msg: null };
+  render();
+  window.KernelNative.healthSync();
+}
+
+/* insert ✅ for one habit on several dates, never un-ticking anything */
+function tickHabitDates(name, isos) {
+  const h = state.files.habits;
+  if (!h || !isos.length) return 0;
+  const lines = h.text.split("\n");
+  const logIdx = lines.findIndex((l) => l.trim().toLowerCase().startsWith("## log"));
+  if (logIdx === -1) return 0;
+  let head = -1;
+  for (let i = logIdx + 1; i < lines.length; i++) {
+    if (lines[i].trim().startsWith("|")) { head = i; break; }
+    if (/^#+\s/.test(lines[i])) return 0;
+  }
+  if (head === -1) return 0;
+  const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+  let cols = cells(lines[head]);
+  if (!cols.includes(name)) {
+    cols = [...cols, name];
+    lines[head] = `| ${cols.join(" | ")} |`;
+    lines[head + 1] = `|${cols.map(() => "---").join("|")}|`;
+    for (let i = head + 2; i < lines.length && lines[i].trim().startsWith("|"); i++) {
+      lines[i] = `| ${[...cells(lines[i]), "—"].slice(0, cols.length).join(" | ")} |`;
+    }
+  }
+  const col = cols.indexOf(name);
+  let changed = 0;
+  for (const iso of isos) {
+    let rowIdx = -1, insertAt = -1, end = head + 2;
+    for (let i = head + 2; i < lines.length && lines[i].trim().startsWith("|"); i++) {
+      end = i + 1;
+      const d = cells(lines[i])[0];
+      if (d === iso) { rowIdx = i; break; }
+      if (insertAt === -1 && d < iso) insertAt = i;   // table is newest-first
+    }
+    if (rowIdx === -1) {
+      const row = cols.map((_, i) => (i === 0 ? iso : i === col ? "✅" : "—"));
+      lines.splice(insertAt === -1 ? end : insertAt, 0, `| ${row.join(" | ")} |`);
+      changed++;
+    } else {
+      const row = cells(lines[rowIdx]);
+      while (row.length < cols.length) row.push("—");
+      if (!row[col].includes("✅")) { row[col] = "✅"; lines[rowIdx] = `| ${row.join(" | ")} |`; changed++; }
+    }
+  }
+  if (changed) applyHabitChange(lines.join("\n"));
+  return changed;
+}
+
+/* add bodyweight rows for dates that have none — manual entries are never overwritten */
+function importWeights(list) {
+  if (!state.files.gym) return 0;
+  const lines = gymText().split("\n");
+  const range = gymTableRange(lines, /^##\s+bodyweight log/i);
+  if (!range) return 0;
+  const have = new Set();
+  for (let i = range.start + 2; i <= range.end; i++) have.add((lines[i].split("|")[1] || "").trim());
+  let added = 0, at = range.end + 1;
+  for (const w of list) {
+    if (have.has(w.date)) continue;
+    lines.splice(at++, 0, `| ${w.date} | ${w.kg} | Samsung Health |`);
+    added++;
+  }
+  if (added) applyGymChange(lines.join("\n"));
+  return added;
+}
+
+/* called by native code with the JSON result of KernelNative.healthSync() */
+window.__kernelHealth = (json) => {
+  let r; try { r = JSON.parse(json); } catch { return; }
+  if (r.status !== "ok") {
+    state.health = { ...(state.health || {}), busy: false, msg: HEALTH_MSG[r.status] || "Health sync failed." };
+    render(); return;
+  }
+  const notes = [];
+  const stepHabit = ((buildModel().habits) || []).find((h) => /steps/i.test(h.name));
+  if (stepHabit) {
+    const days = (r.steps || []).filter((d) => d.steps >= 10000).map((d) => d.date);
+    const n = tickHabitDates(stepHabit.name, days);
+    if (n) notes.push(`${n} step day${n > 1 ? "s" : ""} ticked`);
+  }
+  const w = importWeights(r.weights || []);
+  if (w) notes.push(`${w} weigh-in${w > 1 ? "s" : ""} added`);
+  state.health = { busy: false, at: Date.now(), steps: r.steps || [], workouts: r.workouts || [],
+    msg: notes.length ? notes.join(" · ") : "Up to date" };
+  try { localStorage.setItem(LS_HEALTH, JSON.stringify({ ...state.health, msg: null })); } catch {}
+  render();
+};
+
+function healthCard() {
+  if (!HAS_HEALTH) return "";
+  const h = state.health || {};
+  const today = (h.steps || []).find((d) => d.date === todayIso());
+  const sessions = (h.workouts || []).slice(0, 6);
+  const note = h.busy ? "Syncing…" : h.msg || (h.at ? `Synced ${timeAgo(h.at)} · last 7 days` : "Pulls steps, weight and workouts from Health Connect.");
+  return `
+    <div class="card">
+      <h2>Samsung Health ${today ? `<span class="chip ok num">${today.steps.toLocaleString("en-US")} steps</span>` : ""}</h2>
+      <p class="card-note">${esc(note)}</p>
+      ${sessions.map((s) => `
+        <div class="split health-row"><span>${esc(s.type)} · ${esc(dowOnly(s.date))}</span><b>${s.minutes} min</b></div>`).join("")}
+      <button class="btn outline health-sync" id="btn-health-sync" ${h.busy ? "disabled" : ""}>Sync from Samsung Health${icon("refresh", 16)}</button>
+    </div>`;
+}
+
 /* ---------- gym log (bodyweight + workout sessions) ---------- */
 
 let _gymTimer = null;
@@ -1879,32 +2017,72 @@ function removeGymSession(date, workout) {
   applyGymChange(lines.join("\n"));
 }
 
+/* ---------- shared render helpers ---------- */
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmt0 = (n) => Math.round(n || 0).toLocaleString("en-US");
+/* 24500 → "24.5k", 49000 → "49k" */
+const fmtK = (v) => (v >= 1000 ? `${Math.round(v / 100) / 10}k` : String(v));
+const isoDate = (iso) => new Date(`${String(iso).slice(0, 10)}T00:00:00`);
+const isIso = (s) => /^\d{4}-\d{2}-\d{2}/.test(String(s || ""));
+/* "2026-09-29" → "Sep 29" · "Tue, Sep 29" · "Tue" (non-ISO strings pass through) */
+const shortDate = (iso) => (isIso(iso) ? isoDate(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : String(iso || ""));
+const dowDate = (iso) => (isIso(iso) ? isoDate(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : String(iso || ""));
+const dowOnly = (iso) => (isIso(iso) ? isoDate(iso).toLocaleDateString("en-US", { weekday: "short" }) : String(iso || ""));
+/* vault statuses carry emoji ("⏳ Pending") — the UI shows plain words in outlined chips */
+const plainStatus = (s) => String(s || "").replace(/[\p{Extended_Pictographic}️‍]/gu, "").replace(/\s+/g, " ").trim();
+
+/* a progress ring; the fill is an SVG stroke so it can animate */
+function ringSvg(size, stroke, pct, extraCls = "") {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle class="ring-track" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${stroke}"/>
+    <circle class="ring-fill ${extraCls}" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-width="${stroke}"
+      stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - Math.max(0, Math.min(100, pct)) / 100)}"/>
+  </svg>`;
+}
+
+const backLink = (id, label) => `<button class="back-link" id="${id}">${icon("back", 20)}${esc(label)}</button>`;
+
+/* short name for a schedule day — the long label stays as the subtitle */
+function gymDayTitle(day) {
+  return day.kind === "lift" ? WORKOUT_LABELS[day.workout]
+    : day.kind === "walk" ? "Optional walk" : day.kind === "run" ? "Light run" : "Rest day";
+}
+const gymDayIcon = (day) => (day.kind === "lift" ? "dumbbell" : day.kind === "walk" ? "walk" : day.kind === "run" ? "activity" : "moon");
+
+/* ---------- Today ---------- */
+
 function renderToday(m) {
-  const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const now = new Date();
+  const weekday = now.toLocaleDateString("en-US", { weekday: "long" });
+  const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const dis = state.busy ? "disabled" : "";
   const gymToday = gymTodayLabel();
 
-  const open = m.tasks ? m.tasks.filter((t) => !t.done).length : 0;
-  const heroSub = m.tasks === null ? "No daily note yet"
-    : open === 0 ? "All tasks done" : `${open} task${open === 1 ? "" : "s"} remaining`;
-
+  const TASK_LIMIT = 6;
+  const allTasks = m.tasks || [];
+  const shownTasks = state.tasksAll ? allTasks : allTasks.filter((t, i) => i < TASK_LIMIT || state.taskEdit === t.line);
+  const hiddenCount = allTasks.length - shownTasks.length;
   const tasksHtml = m.tasks === null
     ? `<div class="empty">No daily note yet today — tap + to start one</div>`
     : `${m.tasks.length === 0 ? `<div class="empty">Nothing on the list — tap + to add tasks</div>` : ""}
-       ${m.tasks.map((t) => state.taskEdit === t.line
+       ${shownTasks.map((t) => state.taskEdit === t.line
          ? `<div class="task-row task-edit">
               <input type="text" class="task-edit-input" id="task-edit-input" value="${esc(t.text)}" autocomplete="off">
-              <button class="task-icon-btn save" data-edit-save="${t.line}" title="Save" aria-label="Save">${icon("check", 16)}</button>
+              <button class="task-icon-btn save" data-edit-save="${t.line}" title="Save" aria-label="Save">${icon("check", 18)}</button>
+              <button class="task-icon-btn del" data-del-line="${t.line}" title="Remove task" aria-label="Remove task">${icon("trash", 16)}</button>
               <button class="task-icon-btn" id="btn-task-edit-cancel" title="Cancel" aria-label="Cancel">${icon("x", 16)}</button>
             </div>`
          : `<div class="task-row">
               <button class="task ${t.done ? "done" : ""}" data-line="${t.line}" ${dis}>
-                <span class="box">${t.done ? "✓" : ""}</span>
+                <span class="box">${t.done ? icon("check", 16, 3) : ""}</span>
                 <span class="txt">${linkifyTaskText(t.text, m.articles)}</span>
               </button>
-              <button class="task-icon-btn" data-edit-line="${t.line}" title="Edit task" aria-label="Edit task" ${dis}>${icon("pencil", 15)}</button>
-              <button class="task-icon-btn del" data-del-line="${t.line}" title="Remove task" aria-label="Remove task" ${dis}>${icon("x", 15)}</button>
-            </div>`).join("")}`;
+              <button class="task-icon-btn" data-edit-line="${t.line}" title="Edit task" aria-label="Edit task" ${dis}>${icon("pencil", 16)}</button>
+            </div>`).join("")}
+       ${hiddenCount > 0 ? `<button class="ghost" id="btn-tasks-more">+ ${hiddenCount} more</button>`
+         : state.tasksAll && allTasks.length > TASK_LIMIT ? `<button class="ghost" id="btn-tasks-more">Show less</button>` : ""}`;
 
   /* ---- office transport (log-driven booking window, no calendar) ---- */
   const tp = transportPlan(m);
@@ -1913,111 +2091,119 @@ function renderToday(m) {
   if (tp) {
     const pending = tp.pending;                            // due today, still unmarked
     const actioned = tp.targets.filter((x) => x.status === "booked" || x.status === "off");
-    const multi = tp.targets.length > 1;                   // the Friday Sat+Sun+Mon window
-    const label = (d) => `${esc(d.short)}${d.status === "missed" ? " · ⚠️ marked missed" : ""}`;
+    const multi = pending.length > 1;                      // the Friday Sat+Sun+Mon window
 
-    let head, body = "";
+    let chip, sub, loud = false, actions = "";
     if (pending.length) {
-      const late = tp.pastCutoff;
-      head = `<h2>🚌 Office transport ${late
-        ? `<span class="chip bad">cutoff passed</span>`
-        : `<span class="chip warn">by ${esc(tp.cutoff)}</span>`}</h2>`;
-      body = `
-        <p class="muted review-note">${late
-          ? `The ${esc(tp.cutoff)} window has passed. If you still got ${multi ? "them" : "it"} booked, mark ${multi ? "them" : "it"} below.`
-          : multi
-            ? `Friday window — <b>${pending.length} rides</b> must be booked today before <b>${esc(tp.cutoff)}</b>.`
-            : `Book your ride for <b>${esc(pending[0].nice)}</b> before <b>${esc(tp.cutoff)}</b>.`}</p>
-        ${pending.map((d) => `
-          <div class="row tr-target">
-            <div class="r-main">
-              <div class="r-title">${label(d)}</div>
-              <div class="r-sub">not marked yet — reminders keep coming</div>
-            </div>
-            <div class="r-end">
-              <button class="btn secondary tr-mini" data-tr-book="${esc(d.date)}" ${trDis}>Booked ✓</button>
-            </div>
-          </div>`).join("")}
-        <a class="btn" id="btn-tr-open" href="${esc(tp.site)}" target="_blank" rel="noopener">Open booking site ↗</a>
-        ${pending.length > 1
-          ? `<div style="height:8px"></div><button class="btn secondary" id="btn-tr-book-all" ${trDis}>Mark all ${pending.length} booked ✓</button>`
-          : ""}
-        <button class="show-toggle" id="btn-tr-off-all">${pending.length > 1 ? "No rides needed — days off" : "It's a day off — no ride"}</button>`;
+      chip = tp.pastCutoff ? `<span class="chip bad">Cutoff passed</span>` : `<span class="chip warn">Needs booking</span>`;
+      loud = !tp.pastCutoff;
+      sub = tp.pastCutoff
+        ? `The ${esc(tp.cutoff)} window has passed — if you still booked ${multi ? "them" : "it"}, mark ${multi ? "them" : "it"} below.`
+        : multi
+          ? `Friday window: ${pending.length} rides to book before ${esc(tp.cutoff)}`
+          : `Next booking: ${esc(pending[0].short)} · ${esc(tp.cutoff)}`;
+      actions = `
+        <div class="tr-actions">
+          <a class="btn" id="btn-tr-open" href="${esc(tp.site)}" target="_blank" rel="noopener">Open booking site${icon("ext", 16)}</a>
+          <button class="btn secondary" id="btn-tr-book-all" ${trDis}>${multi ? `Mark ${pending.length} booked` : "Mark booked"}</button>
+        </div>
+        <button class="ghost sm tr-foot" id="btn-tr-off-all" ${trDis}>${multi ? "Days off" : "Day off"} →</button>`;
     } else if (tp.targets.length) {
       const allBooked = actioned.every((x) => x.status === "booked");
-      head = `<h2>🚌 Office transport ${allBooked
-        ? `<span class="chip ok">booked ✓</span>`
-        : `<span class="chip dim">marked</span>`}</h2>`;
-      body = `<p class="muted review-note">${actioned.map((d) =>
-        `${esc(d.short)} — ${d.status === "off" ? "day off" : "booked"}`).join("<br>")}</p>
-        <button class="show-toggle" id="btn-tr-undo-all" ${trDis}>Undo</button>`;
+      chip = allBooked ? `<span class="chip ok">Booked</span>` : `<span class="chip dim">Marked</span>`;
+      sub = actioned.map((d) => `${esc(d.short)} — ${d.status === "off" ? "day off" : "booked"}`).join(" · ");
+      actions = `<button class="ghost sm tr-foot" id="btn-tr-undo-all" ${trDis}>Undo</button>`;
     } else {
-      head = `<h2>🚌 Office transport <span class="chip dim">nothing due today</span></h2>`;
-      body = `<p class="muted review-note">Nothing has to be booked today${tp.unmarkedWeek.length
-        ? ` — but ${tp.unmarkedWeek.length} day${tp.unmarkedWeek.length > 1 ? "s" : ""} ahead ${tp.unmarkedWeek.length > 1 ? "are" : "is"} still unmarked. Mark ${tp.unmarkedWeek.length > 1 ? "them" : "it"} below to silence the reminders.`
-        : ". The whole week ahead is marked."}</p>`;
+      chip = `<span class="chip dim">All clear</span>`;
+      sub = tp.unmarkedWeek.length
+        ? `Nothing due today — ${tp.unmarkedWeek.length} day${tp.unmarkedWeek.length > 1 ? "s" : ""} ahead still unmarked. Tap a day to mark it.`
+        : "The whole week ahead is marked.";
     }
 
-    /* the 7-day strip mirrors how far ahead the site lets you book —
+    /* 7-day strip mirrors how far ahead the site lets you book —
        tap a day to cycle booked → off → clear */
-    const openAhead = state.transportWeek === null
-      ? (!tp.targets.length && tp.unmarkedWeek.length > 0)   // nothing due today but days ahead unmarked → open it for them
-      : state.transportWeek;
     const strip = `
-      <button class="show-toggle" id="btn-tr-week">${openAhead ? "Hide the next 7 days" : `Mark days ahead${tp.unmarkedWeek.length ? ` (${tp.unmarkedWeek.length} unmarked)` : ""}`}</button>
-      ${openAhead ? `
       <div class="tr-week">
         ${tp.week.map((d) => {
-          const cls = d.status === "booked" ? "ok" : d.status === "off" ? "dim"
-            : d.status === "missed" || d.windowGone ? "bad" : "warn";
-          const mark = d.status === "booked" ? "✅" : d.status === "off" ? "🚫"
-            : d.status === "missed" ? "⚠️" : "•";
+          const st = d.status === "booked" ? "ok" : d.status === "off" ? "off"
+            : d.status === "missed" || d.windowGone ? "bad" : d.bookToday ? "next" : "";
+          const inner = d.status === "booked" ? icon("check", 18, 3) : d.status === "off" ? icon("x", 18, 3)
+            : d.status === "missed" ? icon("alert", 18, 3) : `<span>${d.dd}</span>`;
           return `<button class="tr-day" data-tr-cycle="${esc(d.date)}" ${trDis}>
-            <span class="trd-dow">${esc(d.dow)}</span>
-            <span class="trd-mark chip ${cls}">${mark}</span>
-            <span class="trd-num">${d.dd}</span>
+            <span class="trd-dot ${st}">${inner}</span>
+            <span>${esc(d.dow)}</span>
           </button>`;
         }).join("")}
-      </div>
-      <p class="muted" style="font-size:0.7rem;padding:2px 4px 0">Tap a day to cycle booked → off → clear. Anything left unmarked keeps nudging you on its booking day.</p>` : ""}`;
+      </div>`;
 
-    transportCard = `<div class="card transport ${pending.length ? (tp.pastCutoff ? "tr-late" : "tr-due") : "tr-ok"}">
-      ${head}${body}${strip}
+    transportCard = `<div class="card transport">
+      <div class="tr-head">${icon("bus", 16)}<span class="kicker">Office transport</span><span style="margin-left:auto">${chip}</span></div>
+      <p class="tr-line${loud ? "" : " quiet"}">${sub}</p>
+      ${strip}
+      ${actions}
     </div>`;
   }
 
+  /* greeting + today's progress ring */
+  const hr = now.getHours();
+  const greet = hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
+  const total = allTasks.length, doneN = allTasks.filter((t) => t.done).length;
+  const pct = total ? Math.round((doneN / total) * 100) : 0;
+  const mood = m.tasks === null ? "No daily note yet — tap + to start today."
+    : total === 0 ? "A clear day. Add something when you're ready."
+    : doneN === total ? "All done — nice work."
+    : pct >= 50 ? "You're on track. Keep going." : "Let's get moving.";
+
+  const studyPct = m.study && m.study.total ? Math.round((m.study.done / m.study.total) * 100) : 0;
+  const idRows = m.indrive ? m.indrive.rows.length : 0;
+
   return `
   <div class="hero">
-    <div class="hero-date">${esc(dateStr)}</div>
-    <div class="hero-sub">${esc(heroSub)}${state.busy ? " · saving…" : ""}</div>
+    <div class="hero-main">
+      <div class="hero-kicker">${esc(weekday)}</div>
+      <div class="hero-date">${esc(dateStr)}</div>
+      <div class="hero-greet">${greet}, Mehdi</div>
+      <div class="hero-sub">${esc(mood)}${state.busy ? " · saving…" : ""}</div>
+    </div>
+    <div class="ring ring-sm" style="width:84px;height:84px">
+      ${ringSvg(84, 9, pct)}
+      <div class="ring-label"><span class="display">${doneN}/${total}</span><small>TASKS</small></div>
+    </div>
   </div>
 
   ${transportCard}
 
-  <div class="card">
-    <h2>Tasks</h2>
+  <div class="card list">
+    <h2>Tasks ${total ? `<span class="h-extra">${doneN} / ${total}</span>` : ""}</h2>
     ${tasksHtml}
   </div>
 
-  <button class="card duo-tile" id="btn-gym-open" title="Open Gym">
-    <h2>🏋️ Gym ${icon("chevronRight", 13)}</h2>
-    <p class="muted gym-status" style="margin:2px 0 0">${gymToday.kind === "lift" ? WORKOUT_LABELS[gymToday.workout] : gymToday.label}</p>
+  <button class="fill-tile" id="btn-gym-open" data-acc="gym" title="Open Gym">
+    ${icon("dumbbell", 28)}
+    <span class="ft-main">
+      <span class="ft-kicker">Gym · today</span>
+      <span class="ft-title">${esc(gymDayTitle(gymToday))}</span>
+    </span>
+    ${icon("chevr", 22)}
   </button>
 
   <div class="duo">
     ${m.study ? `
-    <button class="card duo-tile" id="btn-study-open" title="Open the study plan">
-      <h2>Cloud study ${icon("chevronRight", 13)}</h2>
-      <div class="duo-val">${m.study.done}/${m.study.total}</div>
-      <div class="duo-sub">${esc(m.study.title)} · ${m.study.total ? Math.round((m.study.done / m.study.total) * 100) : 0}%</div>
+    <button class="card duo-tile" id="btn-study-open" data-acc="read" title="Open the study plan">
+      <span class="duo-head">${icon("book", 16)}<span>Cloud study</span></span>
+      <span class="duo-val">${m.study.done}<small>/${m.study.total}</small></span>
+      <span class="bar thin"><span style="width:${studyPct}%"></span></span>
+      <span class="duo-sub">${studyPct}% · ${esc(m.study.title)}</span>
     </button>` : ""}
-    <button class="card duo-tile" id="btn-indrive-open" title="Open inDrive">
-      <h2>inDrive net ${icon("chevronRight", 13)}</h2>
-      <div class="duo-val ${m.indrive && m.indrive.totalNet > 0 ? "t-indrive" : ""}">${m.indrive ? Math.round(m.indrive.totalNet).toLocaleString() : "—"}</div>
-      <div class="duo-sub">${m.indrive && m.indrive.rows.length ? `${m.indrive.rows.length} day${m.indrive.rows.length === 1 ? "" : "s"} logged · MAD` : "no entries yet"}</div>
+    <button class="card duo-tile" id="btn-indrive-open" data-acc="indrive" title="Open inDrive">
+      <span class="duo-head">${icon("car", 16)}<span>inDrive net</span></span>
+      <span class="duo-val">${m.indrive ? fmt0(m.indrive.totalNet) : "—"}</span>
+      <span class="duo-sub">MAD · ${idRows ? `${idRows} day${idRows === 1 ? "" : "s"} logged` : "no entries yet"}</span>
     </button>
   </div>`;
 }
+
+/* ---------- Clients ---------- */
 
 /* the order the cards render in — the sheet looks clients up by index in this list */
 function clientsSorted(m, tab) {
@@ -2043,45 +2229,46 @@ function planDays(plan) {
   return parseInt(m[1], 10) * (m[2].toUpperCase() === "Y" ? 365 : 30);
 }
 
+function clientBadge(c, kind) {
+  return kind === "active"
+    ? [cval(c.App), planLabel(cval(c.Plan))].filter(Boolean).join(" · ")
+    : cval(c.App);
+}
+
 function clientCard(c, kind, key) {
   const [cls, label] = statusChip(c.Status);
 
   /* status chips only as exceptions — ✅ Active / 🔴 Churned are the tab's norm */
   const isNorm = kind === "active" ? (c.Status || "").includes("✅")
     : kind === "churned" ? true : false;
-  const chip = isNorm ? "" : `<span class="chip ${cls}">${esc(label)}</span>`;
+  const chip = isNorm ? "" : `<span class="chip sm ${cls}">${esc(plainStatus(label))}</span>`;
+  const badgeTxt = clientBadge(c, kind);
+  const badge = badgeTxt ? `<span class="pill">${esc(badgeTxt)}</span>` : "";
 
-  const badgeTxt = kind === "active"
-    ? [cval(c.App), planLabel(cval(c.Plan))].filter(Boolean).join(" · ")
-    : cval(c.App);
-  const badge = badgeTxt ? `<span class="cc-badge">${esc(badgeTxt)}</span>` : "";
-
-  let right, bar = "";
+  let right = "", bar = "";
   if (kind === "active") {
     const d = c.days;
     const tone = d === null ? "dim" : d <= 7 ? "bad" : d <= 30 ? "warn" : "ok";
-    right = `${badge}${chip}<span class="cc-days t-${tone}">${d === null ? "—" : d < 0 ? `${-d}d ago` : `${d}d`}</span>`;
+    right = `<div class="cc-days t-${tone}">${d === null ? "—" : Math.abs(d)}</div>
+      <div class="cc-unit t-${tone}">${d === null ? "NO DATE" : d < 0 ? "DAYS AGO" : "DAYS LEFT"}</div>`;
     const total = planDays(c.Plan);
     if (total && d !== null) {
       const used = Math.min(100, Math.max(2, (1 - d / total) * 100));
-      bar = `<div class="sub-bar"><div class="sub-bar-fill t-${tone}" style="width:${used.toFixed(0)}%"></div></div>`;
+      bar = `<div class="bar hair"><div class="t-${tone}" style="width:${used.toFixed(0)}%"></div></div>`;
     }
-  } else if (kind === "leads") {
-    right = `${badge}${chip}`;
-  } else {
-    right = `${badge}<span class="cc-date">${esc(cval(c.Date))}</span>`;
+  } else if (kind === "churned") {
+    right = `<div class="cc-date">${esc(cval(c.Date))}</div>`;
   }
 
   return `
-  <button class="card client-card" data-client="${esc(key)}">
-    <div class="cc-row">
-      <div class="cc-main">
-        <div class="cc-name">${esc(cval(c.Name) || "—")}</div>
-        <div class="cc-sub">${esc(cval(c.Phone) || "—")}</div>
-      </div>
-      <div class="cc-right">${right}</div>
+  <button class="client-card" data-client="${esc(key)}">
+    <div class="cc-main">
+      <div class="cc-name">${esc(cval(c.Name) || "—")}</div>
+      <div class="cc-sub">${esc(cval(c.Phone) || "—")}</div>
+      ${badge || chip ? `<div class="cc-tags">${badge}${chip}</div>` : ""}
+      ${bar}
     </div>
-    ${bar}
+    ${right ? `<div class="cc-right">${right}</div>` : ""}
   </button>`;
 }
 
@@ -2090,33 +2277,36 @@ function clientSheetHtml(c, kind) {
   const [cls, label] = statusChip(c.Status);
   const phone = (c.Phone || "").replace(/[^+\d]/g, "");
   const hasLogin = !!cval(c.Username) && (!!cval(c.DNS) || !!cval(c.Password));
-  const meta = kind === "active"
-    ? `<span class="chip ${cls}">${esc(label)}</span>${expiryChip(c.days)}`
-    : `<span class="chip ${cls}">${esc(label)}</span>`;
+  const badgeTxt = clientBadge(c, kind);
+  const meta = (badgeTxt ? `<span class="pill">${esc(badgeTxt)}</span>` : "")
+    + (kind === "active" ? expiryChip(c.days) : `<span class="chip ${cls}">${esc(plainStatus(label))}</span>`);
   return `
   <div class="sheet client-sheet">
     <div class="cs-head">
-      <h3>${esc(cval(c.Name) || "—")}</h3>
-      <div class="cs-meta">${meta}</div>
+      <div>
+        <div class="cs-name">${esc(cval(c.Name) || "—")}</div>
+        <div class="cs-meta">${meta}</div>
+      </div>
+      <button class="cs-close" id="cs-close" aria-label="Close">${icon("x", 22)}</button>
     </div>
     <div class="cs-fields">
       ${cdField("Phone", c.Phone, true)}
       ${cdField("App", c.App)}
       ${kind !== "churned" ? cdField("Expiry", c.Expiry) : ""}
-      ${kind === "active" ? cdField("Plan", [cval(c.Plan), cval(c.Price)].filter(Boolean).join(" · ")) : ""}
+      ${kind === "active" ? cdField("Plan", [planLabel(cval(c.Plan)), cval(c.Price)].filter(Boolean).join(" · ")) : ""}
       ${cdField("DNS", c.DNS, true)}
       ${cdField("Username", c.Username, true)}
       ${cdField("Password", c.Password, true)}
       ${cdField("MAC", c["MAC Address"], true)}
       ${kind === "churned" ? cdField("Date", c.Date) : ""}
       ${kind === "churned" ? cdField("Reason", c.Reason) : ""}
-      ${kind === "leads" ? cdField("Trial start", c["Trial Start"]) : ""}
+      ${kind === "leads" ? cdField("Trial", c["Trial Start"]) : ""}
       ${cdField("Notes", c.Notes)}
     </div>
-    <div class="sheet-actions">
-      ${phone ? `<a class="btn secondary cs-call" href="tel:${phone}">${icon("phone", 15)} Call</a>` : ""}
-      ${hasLogin ? `<button class="btn copy-login" data-login="${b64encode(buildLoginMsg(c))}">${icon("copy", 15)} Copy login</button>` : ""}
-    </div>
+    ${phone || hasLogin ? `<div class="btn-row">
+      ${phone ? `<a class="btn secondary lg" href="tel:${phone}">Call${icon("phone", 16)}</a>` : ""}
+      ${hasLogin ? `<button class="btn ink lg" data-login="${b64encode(buildLoginMsg(c))}">Copy login${icon("copy", 16)}</button>` : ""}
+    </div>` : ""}
   </div>`;
 }
 
@@ -2130,15 +2320,17 @@ function updateClientSheet(m) {
   el.innerHTML = clientSheetHtml(c, key.slice(0, i));
   el.classList.remove("hidden");
   el.onclick = (e) => { if (e.target === el) { state.openClient = null; render(); } };
+  const close = el.querySelector("#cs-close");
+  if (close) close.onclick = () => { state.openClient = null; render(); };
   el.querySelectorAll(".cd-row[data-copy]").forEach((r) => {
-    r.onclick = () => copySwap(r.querySelector(".cd-ic"), 14, r.dataset.copy);
+    r.onclick = () => copySwap(r.querySelector(".cd-ic"), 16, r.dataset.copy);
   });
   el.querySelectorAll("[data-login]").forEach((b) => {
     b.onclick = () => {
       copyToClipboard(b64decode(b.dataset.login)).then((ok) => {
         if (!ok) return;
         const orig = b.innerHTML;
-        b.innerHTML = `${icon("check", 15)} Copied`;
+        b.innerHTML = `Copied${icon("check", 16)}`;
         setTimeout(() => { if (document.body.contains(b)) b.innerHTML = orig; }, 1300);
       });
     };
@@ -2149,45 +2341,75 @@ function scriptsCard(m) {
   const open = state.scriptsOpen;
   return `
   <div class="card scripts${open ? " open" : ""}">
-    <button class="card-head" id="scripts-toggle">
-      <h2>DM Scripts <span class="h-extra muted">${m.scripts.length} · tap to ${open ? "hide" : "show"}</span></h2>
-      <span class="caret">${icon("chevronDown", 16)}</span>
+    <button class="card-head" id="scripts-toggle" aria-expanded="${open}">
+      <span class="kicker">DM scripts · ${m.scripts.length}</span>
+      <span class="caret">${icon("chevd", 18)}</span>
     </button>
     ${open ? m.scripts.map((s, i) => `
       <button class="script-row" data-script="${i}">
         <div class="r-main">
           <div class="r-title">${esc(s.name)}</div>
-          <div class="r-sub script-preview">${esc(s.text)}</div>
+          <div class="script-preview">${esc(s.text)}</div>
         </div>
         <span class="script-copy">${icon("copy", 16)}</span>
       </button>`).join("") : ""}
   </div>`;
 }
 
+/* where the back link on a drilled-in screen returns to */
+const subBackLabel = () => (state.subFrom === "settings" || !state.subFrom ? "Settings" : state.subFrom === "today" ? "Today" : "Back");
+
+function renderClients(m) {
+  const tab = state.clientTab;
+  const sorted = clientsSorted(m, tab);
+  return `
+  ${backLink("btn-sub-back", subBackLabel())}
+  <div class="seg">
+    <button data-ctab="active" class="${tab === "active" ? "active" : ""}">Active (${m.active.length})</button>
+    <button data-ctab="leads" class="${tab === "leads" ? "active" : ""}">Leads (${m.leads.length})</button>
+    <button data-ctab="churned" class="${tab === "churned" ? "active" : ""}">Churned (${m.churned.length})</button>
+  </div>
+  ${sorted.length
+    ? `<div class="client-list">${sorted.map((c, i) => clientCard(c, tab, `${tab}:${i}`)).join("")}</div>`
+    : `<div class="empty">Nothing here</div>`}
+
+  ${m.scripts.length ? scriptsCard(m) : ""}`;
+}
+
+/* ---------- inDrive ---------- */
+
 function renderIndrive(m) {
   const d = m.indrive || { price: 15, consumption: 6.5, rows: [], totalNet: 0, totalGross: 0, totalKm: 0 };
+  const n = d.rows.length;
 
   const totalsCard = `
-    <div class="card">
-      <h2>🚗 inDrive <span class="chip ok">${d.totalNet.toLocaleString()} MAD net</span></h2>
-      <p class="muted review-note">${d.rows.length} day${d.rows.length === 1 ? "" : "s"} logged · ${d.totalKm.toLocaleString()} km · ${d.totalGross.toLocaleString()} MAD gross so far</p>
+    <div class="hero-fill">
+      <div class="id-brand">${icon("car", 20)}inDrive</div>
+      <div class="hf-kicker id-kicker">Total net (MAD)</div>
+      <div class="display id-net">${fmt0(d.totalNet)}</div>
+      <div class="hf-stats two hf-rule">
+        <div><div class="hf-kicker">Total km</div><b class="display">${fmt0(d.totalKm)}</b></div>
+        <div><div class="hf-kicker">Total gross</div><b class="display">${fmt0(d.totalGross)}</b></div>
+      </div>
     </div>`;
 
   const logCard = `
-    <div class="card">
-      <h2>Log</h2>
-      ${d.rows.length ? d.rows.map((r) => `
-        <div class="row" data-indrive-edit="${esc(r.date)}">
-          <div class="r-main">
-            <div class="r-title">${esc(r.date)}</div>
-            <div class="r-sub">${r.km} km · ${r.gross} gross − ${r.diesel} diesel${r.notes ? " · " + esc(r.notes) : ""}</div>
-          </div>
-          <div class="r-end"><b>${r.net.toLocaleString()}</b> <span class="muted">MAD</span></div>
-        </div>`).join("") : `<div class="empty">Nothing logged yet — tap the + button below</div>`}
+    <div class="card list">
+      <h2>Log · ${n} day${n === 1 ? "" : "s"}</h2>
+      ${n ? `
+      <div class="ilog">
+        <div class="ilog-row head"><span>Date</span><span>Km</span><span>Gross</span><span>Diesel</span><span>Net</span></div>
+        ${d.rows.map((r) => `
+        <div class="ilog-row" data-indrive-edit="${esc(r.date)}">
+          <span>${esc(shortDate(r.date))}</span><span>${fmt0(r.km)}</span><span>${fmt0(r.gross)}</span><span class="dz">${fmt0(r.diesel)}</span><b>${fmt0(r.net)}</b>
+        </div>`).join("")}
+      </div>` : `<div class="empty">Nothing logged yet — tap + to add a day</div>`}
     </div>`;
 
-  return totalsCard + logCard;
+  return backLink("btn-sub-back", subBackLabel()) + totalsCard + logCard;
 }
+
+/* ---------- Gym ---------- */
 
 function gymTodayLabel() {
   return GYM_SCHEDULE[new Date().getDay()] || { kind: "rest", label: "Rest" };
@@ -2196,94 +2418,98 @@ function gymTodayLabel() {
 function renderGym(m) {
   const g = m.gym || { bodyweights: [], sessions: [], lastBodyweight: null };
   const today = gymTodayLabel();
+  const weekday = new Date().toLocaleDateString("en-US", { weekday: "long" });
 
   /* weight-loss goal progress (100kg → 85kg), driven by the Bodyweight log
      that's already tracked here — no separate goal-entry UI needed */
   const cur = g.lastBodyweight ? g.lastBodyweight.weight : GYM_GOAL.startKg;
   const span = GYM_GOAL.startKg - GYM_GOAL.targetKg;
   const goalPct = Math.max(0, Math.min(100, ((GYM_GOAL.startKg - cur) / span) * 100));
-  const goalBar = `
-      <div class="bar" style="margin-top:10px"><div style="width:${goalPct}%"></div></div>
-      <div class="bar-sub"><span>${cur} / ${GYM_GOAL.targetKg} kg</span><span>${goalPct.toFixed(0)}% to goal</span></div>`;
+  const lostKg = g.lastBodyweight ? Math.round((GYM_GOAL.startKg - cur) * 10) / 10 : 0;
 
+  const nEx = today.kind === "lift" ? GYM_WORKOUTS[today.workout].length : 0;
+  const durTxt = (String(today.label).match(/\(([^)]*)\)/) || [])[1] || "";
+  const subTxt = today.kind === "lift" ? [durTxt, nEx ? `${nEx} exercises` : ""].filter(Boolean).join(" · ") : today.label;
   const heroCard = `
+    <div class="hero-fill">
+      <div class="hf-kicker">Today · ${esc(weekday)}</div>
+      <div class="display gym-title">${esc(gymDayTitle(today))}</div>
+      ${subTxt ? `<div class="gym-sub">${esc(subTxt)}</div>` : ""}
+      <div class="hf-rule gym-goal"><b>${GYM_GOAL.startKg} kg → ${GYM_GOAL.targetKg} kg</b><span>${lostKg > 0 ? `${lostKg} kg lost` : "no weigh-in yet"}</span></div>
+      <div class="hf-bar gym"><div style="width:${goalPct}%"></div></div>
+      <div class="gym-now">${cur} kg now · ${goalPct.toFixed(0)}% to goal</div>
+      <button class="btn on-fill" id="btn-gym-plan">View full weekly plan${icon("ext", 16)}</button>
+    </div>`;
+
+  /* Mon → Sun strip; today highlighted */
+  const dowNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const todayIdx = new Date().getDay();
+  const weekCard = `
     <div class="card">
-      <h2>🏋️ Gym</h2>
-      <p class="muted gym-status">${today.kind === "lift" ? `Today — ${WORKOUT_LABELS[today.workout]}` : `Today — ${esc(today.label)}`}</p>
-      <p class="muted" style="font-size:0.72rem;margin-top:2px">Goal: ${GYM_GOAL.startKg}kg → ${GYM_GOAL.targetKg}kg</p>
-      ${goalBar}
-      <button class="show-toggle" id="btn-gym-plan">📋 View full weekly plan</button>
+      <h2>Weekly plan</h2>
+      <div class="gw-week">
+        ${[1, 2, 3, 4, 5, 6, 0].map((d) => `
+          <div class="gw-day ${d === todayIdx ? "today" : ""}" title="${esc(GYM_SCHEDULE[d].label)}">
+            <span class="gw-dot">${icon(gymDayIcon(GYM_SCHEDULE[d]), 18)}</span>
+            <span>${dowNames[d]}</span>
+          </div>`).join("")}
+      </div>
     </div>`;
 
   const bwCard = `
-    <div class="card">
-      <h2>Bodyweight ${g.lastBodyweight ? `<span class="chip ok">${g.lastBodyweight.weight} kg</span>` : ""}</h2>
-      <p class="muted review-note">${g.lastBodyweight ? `Last weighed ${esc(g.lastBodyweight.date)}${g.lastBodyweight.notes ? " · " + esc(g.lastBodyweight.notes) : ""}.` : "Weigh in 2-3x/week — track the trend, not day-to-day noise. Tap the small button above + to log."}</p>
+    <div class="card list">
+      <h2>Bodyweight ${g.lastBodyweight ? `<span class="chip fill">${g.lastBodyweight.weight} kg</span>` : ""}</h2>
+      <p class="card-note">${g.lastBodyweight ? `Last weighed ${esc(dowDate(g.lastBodyweight.date))}` : "Weigh in 2-3x a week — track the trend, not day-to-day noise. Tap the scale button to log."}</p>
       ${g.bodyweights.length ? g.bodyweights.slice(0, 5).map((b) => `
         <div class="row" data-bw-edit="${esc(b.date)}">
-          <div class="r-main"><div class="r-title">${esc(b.date)}</div>${b.notes ? `<div class="r-sub">${esc(b.notes)}</div>` : ""}</div>
-          <div class="r-end"><b>${b.weight}</b> <span class="muted">kg</span></div>
-        </div>`).join("") : `<div class="empty">Nothing logged yet</div>`}
+          <div class="r-main">${esc(shortDate(b.date))}${b.notes ? ` · ${esc(b.notes)}` : ""}</div>
+          <div class="r-end"><b>${b.weight} kg</b></div>
+        </div>`).join("") : ""}
     </div>`;
 
   const sessionsCard = `
-    <div class="card">
-      <h2>Workout Log</h2>
+    <div class="card list">
+      <h2>Workout log</h2>
       ${g.sessions.length ? g.sessions.slice(0, 8).map((s) => `
-        <div class="row" data-gym-edit="${esc(s.date)}|${esc(s.workout)}">
-          <div class="r-main">
-            <div class="r-title">${esc(s.date)} · ${esc(WORKOUT_LABELS[s.workout] || s.workout)}</div>
-            <div class="r-sub">${s.exercises.map((e) => {
-              const w = e.weight != null ? `${e.weight}kg` : "";
-              const parts = [w, e.reps ? esc(e.reps) : ""].filter(Boolean);
-              return `${esc(e.exercise)}${parts.length ? " " + parts.join("×") : ""}`;
-            }).join(" · ")}</div>
-          </div>
-        </div>`).join("") : `<div class="empty">Nothing logged yet — tap the + button below</div>`}
+        <div class="log-entry" data-gym-edit="${esc(s.date)}|${esc(s.workout)}">
+          <div class="split"><span>${esc(WORKOUT_LABELS[s.workout] || s.workout)}</span><span>${esc(dowDate(s.date))}</span></div>
+          <div class="r-sub">${s.exercises.map((e) => {
+            const parts = [e.weight != null ? String(e.weight) : "", e.reps ? esc(e.reps) : ""].filter(Boolean);
+            return `${esc(e.exercise)}${parts.length ? " " + parts.join("×") : ""}`;
+          }).join(" · ")}</div>
+        </div>`).join("") : `<div class="empty">Nothing logged yet — tap + to log a session</div>`}
     </div>`;
 
   const workoutRef = (letter) => `
-    <div class="card">
-      <h2>${esc(WORKOUT_LABELS[letter])}</h2>
-      <p class="muted" style="font-size:0.72rem;margin-top:-4px;margin-bottom:2px">Hold an exercise for how-to.</p>
+    <div class="card list">
+      <h2 class="acc">${esc(WORKOUT_LABELS[letter])} <span class="h-hint">Hold an exercise for how-to</span></h2>
       ${GYM_WORKOUTS[letter].map((e, i) => `
-        <div class="row gym-ref-row" data-gym-how="${letter}:${i}">
-          <div class="r-main"><div class="r-title">${e.emoji ? `${e.emoji} ` : ""}${esc(e.name)}</div>${e.alt ? `<div class="r-sub">or ${esc(e.alt)}</div>` : ""}</div>
-          <div class="r-end muted">${esc(e.target)}</div>
+        <div class="row ex-row" data-gym-how="${letter}:${i}">
+          <span class="ex-n">${pad2(i + 1)}</span>
+          <div class="r-main"><div class="r-title">${esc(e.name)}</div>${e.alt ? `<div class="r-sub">or ${esc(e.alt)}</div>` : ""}</div>
+          <div class="r-end">${esc(e.target)}</div>
         </div>`).join("")}
     </div>`;
 
+  const tips = [
+    "Stay in a calorie deficit — healthy eating and portion control",
+    "Drink 2–3 L of water a day",
+    "Sleep 7–8 hours",
+    "Be consistent, not perfect",
+    "Track weight, measurements and how you feel",
+    "Adjust the plan if needed",
+  ];
   const tipsCard = `
     <div class="card">
-      <h2>Tips for Success</h2>
-      <ul class="gym-tips">
-        <li>Stay in a calorie deficit — healthy eating + portion control</li>
-        <li>Drink 2-3 liters of water daily</li>
-        <li>Get 7-8 hours of sleep</li>
-        <li>Be consistent, not perfect</li>
-        <li>Track your progress — weight, measurements, how you feel</li>
-        <li>Adjust the plan if needed</li>
-      </ul>
+      <h2>Tips for success</h2>
+      <div class="tips">${tips.map((t, i) => `<div><span>${pad2(i + 1)}</span>${esc(t)}</div>`).join("")}</div>
     </div>`;
 
-  return heroCard + tipsCard + workoutRef("UPPER") + workoutRef("LEGS") + sessionsCard + bwCard;
+  const order = today.kind === "lift" && today.workout === "LEGS" ? ["LEGS", "UPPER"] : ["UPPER", "LEGS"];
+  return heroCard + weekCard + healthCard() + workoutRef(order[0]) + sessionsCard + bwCard + workoutRef(order[1]) + tipsCard;
 }
 
-function renderClients(m) {
-  const tab = state.clientTab;
-  const sorted = clientsSorted(m, tab);
-  return `
-  <div class="seg">
-    <button data-ctab="active" class="${tab === "active" ? "active" : ""}">Active (${m.active.length})</button>
-    <button data-ctab="leads" class="${tab === "leads" ? "active" : ""}">Leads (${m.leads.length})</button>
-    <button data-ctab="churned" class="${tab === "churned" ? "active" : ""}">Churned (${m.churned.length})</button>
-  </div>
-  ${sorted.length
-    ? sorted.map((c, i) => clientCard(c, tab, `${tab}:${i}`)).join("")
-    : `<div class="card"><div class="empty">Nothing here</div></div>`}
-
-  ${m.scripts.length ? scriptsCard(m) : ""}`;
-}
+/* ---------- Finances ---------- */
 
 /* days until the next salary day (the Nth of a month) */
 function daysUntilSalary(day) {
@@ -2295,6 +2521,9 @@ function daysUntilSalary(day) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   return Math.round((next - today) / 86400000);
 }
+
+/* debt avatars take a section hue, picked from the name so they stay stable */
+const AVATAR_HUES = ["#ff8a3d", "#a98bff", "#5b9bff", "#3ddc84", "#ff5c7c", "#a7e92f"];
 
 function renderMoney(m) {
   const s = m.savings;
@@ -2309,31 +2538,57 @@ function renderMoney(m) {
   const target = s.target || 70000;
   const round5k = (n) => Math.round(n / 5000) * 5000;
   const milestones = [...new Set([round5k(target * 0.35), round5k(target * 0.7), target])].filter((v) => v > 0);
-  const markers = milestones.map((v) => {
-    const left = Math.min(100, (v / target) * 100);
-    const hit = (s.current || 0) >= v;
-    return `<span class="ms-mark ${hit ? "hit" : ""}" style="left:${left}%" title="${v.toLocaleString()} MAD"></span>`;
-  }).join("");
+  const msPos = (v) => Math.min(100, (v / target) * 100);
+  const markers = milestones.map((v) => `<span class="ms-mark${msPos(v) >= 100 ? " end" : ""}" style="left:${msPos(v)}%" title="${v.toLocaleString()} MAD"></span>`).join("");
+  const msLabels = milestones.map((v) => msPos(v) >= 100
+    ? `<span class="end">${fmtK(v)}</span>`
+    : `<span style="left:${msPos(v)}%">${fmtK(v)}</span>`).join("");
+
+  const dlDate = s.deadline ? Date.parse(String(s.deadline).split("(")[0].trim()) : NaN;
+  const daysLeft = isNaN(dlDate) ? null : Math.max(0, Math.ceil((dlDate - Date.now()) / 86400000));
+  const deadlineTxt = s.deadline ? String(s.deadline).split("(")[0].trim() : "";
+
+  const goalCard = `
+  <div class="hero-fill">
+    <div class="goal-top">
+      <div>
+        <div class="hf-kicker">Goal${deadlineTxt ? ` · by ${esc(deadlineTxt)}` : ""}</div>
+        <div class="display goal-amt">${s.target ? s.target.toLocaleString("en-US") : "—"}</div>
+        <div class="goal-unit">MAD</div>
+      </div>
+      <div class="ring goal-ring" style="width:76px;height:76px">
+        ${ringSvg(76, 9, pct)}
+        <div class="ring-label">${Math.round(pct)}%</div>
+      </div>
+    </div>
+    <div class="ms-wrap"><div class="hf-bar"><div style="width:${pct}%"></div></div>${markers}</div>
+    <div class="ms-labels">${msLabels}</div>
+    <div class="hf-stats hf-rule">
+      <div><div class="hf-kicker">Saved</div><b>${s.current ? s.current.toLocaleString("en-US") : "—"}</b></div>
+      <div><div class="hf-kicker">Remaining</div><b>${remaining > 0 ? remaining.toLocaleString("en-US") : "Reached"}</b></div>
+      ${daysLeft !== null ? `<div><div class="hf-kicker">Days left</div><b>${daysLeft}</b></div>` : ""}
+    </div>
+  </div>`;
 
   /* ---- this month ---- */
   const salaryDays = daysUntilSalary(s.salaryDay || 28);
-  const rateChip = s.rate === null || s.rate === undefined ? ""
-    : `<span class="chip ${s.rate >= 50 ? "ok" : s.rate >= 30 ? "warn" : "bad"}">${s.rate.toFixed(0)}%</span>`;
+  const salaryOn = new Date(); salaryOn.setDate(salaryOn.getDate() + salaryDays);
+  const reviewDone = !!(m.review && m.review.thisMonth && !state.reviewEdit);
   const monthCard = `
   <div class="card">
-    <h2>This Month <span class="h-extra muted">${nowM} ${nowY}</span></h2>
-    <div class="month-grid">
-      <div class="mg-cell">
-        <div class="mg-val">${salaryDays === 0 ? "Today" : `${salaryDays}d`}</div>
-        <div class="mg-lbl">next salary (${s.salaryDay || 28}th)</div>
+    <h2>This month <span class="h-hint">${nowM} ${nowY}</span></h2>
+    <div class="month-pair">
+      <div>
+        <div class="big-num">${salaryDays === 0 ? "Today" : salaryDays}</div>
+        <div class="big-sub">${salaryDays === 0 ? "salary day" : `days to salary · ${esc(salaryOn.toLocaleDateString("en-US", { month: "short", day: "numeric" }))}`}</div>
+      </div>
+      <div>
+        <div class="big-num">${s.rate === null || s.rate === undefined ? "—" : `${s.rate.toFixed(0)}<small>%</small>`}</div>
+        <div class="big-sub">savings rate</div>
       </div>
     </div>
-    ${s.monthSaved > 0
-      ? `<div class="month-saved">
-           <div class="ms-row"><span>Saved this month</span><b>${s.monthSaved.toLocaleString()} MAD</b></div>
-           ${rateChip ? `<div class="ms-row"><span>Savings rate</span>${rateChip}</div>` : ""}
-         </div>`
-      : `<div class="bar-sub" style="margin-top:10px"><span>Not logged yet this month</span></div>`}
+    ${s.monthSaved > 0 ? `<div class="split month-saved"><span>Saved this month</span><b>+${s.monthSaved.toLocaleString("en-US")} MAD</b></div>` : ""}
+    ${reviewDone ? `<button class="btn outline" id="btn-review-again" ${state.busy ? "disabled" : ""}>Update balance${icon("refresh", 16)}</button>` : ""}
   </div>`;
 
   /* ---- balance update (form + latest entry) ---- */
@@ -2342,31 +2597,21 @@ function renderMoney(m) {
     const r = m.review;
     const done = r.thisMonth && !state.reviewEdit;
     const dis = state.busy ? "disabled" : "";
-
-    if (done) {
-      const f = r.thisMonth.fields;
+    if (!done) {
       balanceCard = `
       <div class="card">
-        <h2>Balance <span class="chip ok">logged ✓</span></h2>
-        <p class="muted review-note">Last updated ${esc(r.thisMonth.dateRaw)}.</p>
-        <div class="month-saved">
-          ${f.balance ? `<div class="ms-row"><span>Balance</span><b>${esc(f.balance)}</b></div>` : ""}
-          ${f.notes && f.notes !== "—" ? `<div class="ms-row"><span>Notes</span><span>${esc(f.notes)}</span></div>` : ""}
+        <h2>Update balance</h2>
+        <p class="form-note">Log your current savings balance — it updates the goal and the tracker.</p>
+        <div class="form-stack">
+          <div><label class="flabel" for="rv-balance">Savings balance · MAD</label>
+            <input type="number" inputmode="decimal" id="rv-balance" placeholder="${s.current ? fmtNum(s.current) : "0"}" value=""></div>
+          <div><label class="flabel" for="rv-notes">Notes · optional</label>
+            <input type="text" id="rv-notes" placeholder="Anything worth remembering…"></div>
+          <div class="btn-row">
+            ${r.thisMonth ? `<button class="btn secondary" id="btn-review-cancel">Cancel</button>` : ""}
+            <button class="btn" id="btn-review-save" ${dis}>Save balance</button>
+          </div>
         </div>
-        <button class="show-toggle" id="btn-review-again" ${dis}>Update again</button>
-      </div>`;
-    } else {
-      balanceCard = `
-      <div class="card">
-        <h2>Update Balance</h2>
-        <p class="muted review-note">Log your current savings balance — updates the goal + tracker.</p>
-        <label class="rv-label">Savings account balance (MAD)</label>
-        <input type="number" inputmode="decimal" id="rv-balance" placeholder="${s.current ? fmtNum(s.current) : "0"}" value="">
-        <label class="rv-label">Notes <span class="muted">· optional</span></label>
-        <input type="text" id="rv-notes" placeholder="Anything worth remembering…">
-        <div style="height:12px"></div>
-        <button class="btn" id="btn-review-save" ${dis}>Save balance</button>
-        ${r.thisMonth ? `<button class="show-toggle" id="btn-review-cancel">Cancel</button>` : ""}
       </div>`;
     }
   }
@@ -2374,27 +2619,20 @@ function renderMoney(m) {
   /* ---- monthly tracker (compact, future months behind a toggle) ---- */
   const trackerRows = (s.tracker || []).map((r) => {
     const vals = Object.values(r).map((v) => v.replace(/\*/g, ""));
-    const month = vals[0] || "";
+    const month = (vals[0] || "").replace(/←.*$/, "").trim();
     const saved = num(vals[3]);
     const total = num(vals[4]);
-    const isCurrent = month.includes(nowM) && month.includes(nowY);
+    const isCurrent = (vals[0] || "").includes(nowM) && (vals[0] || "").includes(nowY);
     const isActual = saved !== null;
     const isProj = !isActual && !isCurrent;
-    const barPct = total !== null ? Math.min(100, Math.round((total / target) * 100)) : 0;
-    const pill = isCurrent && !isActual
-      ? `<span class="tr-now">now</span>`
-      : isActual
-        ? `<span class="muted pill-xs">${total !== null ? Math.round((total / target) * 100) + "%" : ""}</span>`
-        : `<span class="muted pill-xs">—</span>`;
-    const sub = isActual
-      ? `${saved.toLocaleString()} MAD saved${total !== null ? ` · ${total.toLocaleString()} total` : ""}`
-      : isCurrent ? "in progress" : "—";
+    const pctTxt = isActual && total !== null ? Math.round((total / target) * 100) + "%" : "—";
     return {
       isProj,
-      html: `<div class="tracker-row${isCurrent ? " tr-cur" : ""}${isProj ? " tr-proj" : ""}">
-        <div class="tr-head"><span class="tr-month">${esc(month.replace(/←.*$/, "").trim())}</span>${pill}</div>
-        <div class="tr-bar"><div class="tr-bar-fill" style="width:${barPct}%"></div></div>
-        <div class="tr-amount">${sub}</div>
+      html: `<div class="trk-row${isProj ? " proj" : ""}">
+        <span class="box${isActual ? " on" : ""}">${isActual ? icon("check", 14, 3) : ""}</span>
+        <span class="trk-month">${esc(month)}</span>
+        <span>${isActual ? `+${saved.toLocaleString("en-US")}` : isCurrent ? "in progress" : "—"}</span>
+        <span class="trk-pct">${pctTxt}</span>
       </div>`,
     };
   });
@@ -2403,10 +2641,10 @@ function renderMoney(m) {
     const visible = trackerRows.filter((r) => !r.isProj);
     const proj = trackerRows.filter((r) => r.isProj);
     const toggleBtn = proj.length
-      ? `<button class="show-toggle" id="btn-tracker-toggle">${state.trackerExpanded ? "Show less" : `+ ${proj.length} more month${proj.length === 1 ? "" : "s"}`}</button>`
+      ? `<button class="ghost" id="btn-tracker-toggle">${state.trackerExpanded ? "Show less" : `+ ${proj.length} more month${proj.length === 1 ? "" : "s"}`}</button>`
       : "";
-    return `<div class="card">
-      <h2>Monthly Tracker</h2>
+    return `<div class="card list">
+      <h2>Monthly tracker</h2>
       ${visible.map((r) => r.html).join("")}
       ${state.trackerExpanded ? proj.map((r) => r.html).join("") : ""}
       ${toggleBtn}
@@ -2422,57 +2660,52 @@ function renderMoney(m) {
     const ps = parseDebtStatus(ex ? ex.status : "");
     const basePick = state.debtStatusPick || ps.base;
     debtBody = `
-      <label class="rv-label">Person</label>
-      <input type="text" id="db-name" placeholder="Who owes you" value="${editing ? esc(ex.name) : ""}" ${editing ? "readonly" : ""}>
-      <label class="rv-label">Amount (MAD)</label>
-      <input type="number" inputmode="decimal" id="db-amount" placeholder="0" value="${ex && ex.amount != null ? ex.amount : ""}">
-      <label class="rv-label">Status</label>
-      <div class="seg rv-seg">
-        ${DEBT_STATUS.map((o) => `<button type="button" data-debt-status="${o.key}" class="${basePick === o.key ? "active" : ""}">${o.key}</button>`).join("")}
+      <div class="form-stack">
+        <div><label class="flabel" for="db-name">Person</label>
+          <input type="text" id="db-name" placeholder="Who owes you" value="${editing ? esc(ex.name) : ""}" ${editing ? "readonly" : ""}></div>
+        <div><label class="flabel" for="db-amount">Amount · MAD</label>
+          <input type="number" inputmode="decimal" id="db-amount" placeholder="0" value="${ex && ex.amount != null ? ex.amount : ""}"></div>
+        <div><label class="flabel">Status</label>
+          <div class="seg acc">
+            ${DEBT_STATUS.map((o) => `<button type="button" data-debt-status="${o.key}" class="${basePick === o.key ? "active" : ""}">${o.key}</button>`).join("")}
+          </div></div>
+        <div><label class="flabel" for="db-extra">Status detail · optional, e.g. ~Jul 2026</label>
+          <input type="text" id="db-extra" placeholder="timeline or note" value="${editing ? esc(ps.extra) : ""}"></div>
+        <div class="btn-row">
+          <button class="btn secondary" id="btn-debt-cancel">Cancel</button>
+          <button class="btn" id="btn-debt-save" ${dbusy}>${editing ? "Save changes" : "Add debt"}</button>
+        </div>
       </div>
-      <label class="rv-label">Status detail <span class="muted">· optional, e.g. ~Jul 2026</span></label>
-      <input type="text" id="db-extra" placeholder="timeline or note" value="${editing ? esc(ps.extra) : ""}">
-      <div style="height:12px"></div>
-      <button class="btn" id="btn-debt-save" ${dbusy}>${editing ? "Save changes" : "Add debt"}</button>
-      ${editing ? `<button class="show-toggle" id="btn-debt-paid" ${dbusy}>Mark paid ✅</button>
-                   <button class="show-toggle danger" id="btn-debt-remove" ${dbusy}>Remove debt</button>` : ""}
-      <button class="show-toggle" id="btn-debt-cancel">Cancel</button>`;
+      ${editing ? `<button class="ghost" id="btn-debt-paid" ${dbusy}>${icon("check", 16)}Mark paid</button>
+                   <button class="ghost danger" id="btn-debt-remove" ${dbusy}>${icon("trash", 16)}Remove debt</button>` : ""}`;
   } else {
     debtBody = `
       ${m.debts.map((d) => {
         const [cls, label] = statusChip(d.status);
+        const hue = AVATAR_HUES[[...d.name].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 997, 7) % AVATAR_HUES.length];
+        const ini = d.name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
         return `<div class="row debt-row" data-debt-edit="${esc(d.name)}">
-          <div class="r-main"><div class="r-title">${esc(d.name)}</div></div>
-          <div class="r-end"><b>${d.amount ? d.amount.toLocaleString() : "—"}</b> <span class="muted">MAD</span>
-          <span class="chip ${cls}" style="margin-left:6px">${esc(label)}</span>
-          <span class="debt-edit-ic">✏️</span></div>
+          <span class="avatar" style="background:${hue}">${esc(ini)}</span>
+          <div class="r-main"><div class="r-title">${esc(d.name)}</div><span class="chip sm ${cls}">${esc(plainStatus(label))}</span></div>
+          <div class="debt-amt">${d.amount ? d.amount.toLocaleString("en-US") : "—"}<small>MAD</small></div>
         </div>`;
       }).join("") || `<div class="empty">No debts tracked</div>`}
-      <button class="show-toggle" id="btn-debt-add">+ Add debt</button>`;
+      ${m.debtTotal ? `<div class="split debt-total"><span>Total outstanding</span><b>${m.debtTotal.toLocaleString("en-US")} MAD</b></div>` : ""}`;
   }
   const debtCard = `
   <div class="card">
-    <h2>Debts Owed to You ${m.debtTotal ? `<span class="h-extra">${m.debtTotal.toLocaleString()} MAD</span>` : ""}</h2>
-    <p class="muted review-note">Not spending money — counts toward the goal when repaid.${m.debtTotal && remaining ? ` Covers ${Math.min(100, Math.round((m.debtTotal / remaining) * 100))}% of the gap to ${target.toLocaleString()}.` : ""}</p>
+    <h2>${state.debtEdit === "__new__" ? "Add debt" : state.debtEdit ? "Edit debt" : "Debts owed to you"}
+      ${state.debtEdit ? "" : `<button class="link-btn" id="btn-debt-add">+ Add</button>`}</h2>
     ${debtBody}
   </div>`;
 
-  return `
-  <div class="card goal-card">
-    <div class="goal-head">
-      <span class="goal-tag">🎯 GOAL</span>
-      <span class="goal-sub">${s.paymentsLeft ? `${s.paymentsLeft} salaries left` : ""}${s.deadline ? ` · ${esc(s.deadline.split("(")[0].trim())}` : ""}</span>
-    </div>
-    <div class="big-number">${s.current ? s.current.toLocaleString() : "—"} <small>/ ${s.target ? s.target.toLocaleString() : "—"} MAD</small></div>
-    <div class="bar ms-bar"><div style="width:${pct}%"></div>${markers}</div>
-    <div class="bar-sub"><span>${pct.toFixed(1)}%</span><span>${remaining > 0 ? `${remaining.toLocaleString()} MAD to go` : "goal reached ✓"}</span></div>
-  </div>
-
-  ${monthCard}
-  ${balanceCard}
-  ${trackerCard}
-  ${debtCard}`;
+  return goalCard + monthCard + balanceCard + trackerCard + debtCard;
 }
+
+/* ---------- Habits ---------- */
+
+const habitIcon = (n) => /sugar/i.test(n) ? "lock" : /water|drink/i.test(n) ? "droplet" : /walk|step/i.test(n) ? "activity"
+  : /cloud|study/i.test(n) ? "cloud" : /read|book/i.test(n) ? "book" : "flame";
 
 function renderHabits(m) {
   if (!m.habits) {
@@ -2482,23 +2715,22 @@ function renderHabits(m) {
   const done = m.habits.filter((h) => h.doneToday).length;
   const dis = state.busy ? "disabled" : "";
   const editing = state.habitsEdit;
+  const best = m.habits.reduce((mx, h) => Math.max(mx, h.streak || 0), 0);
 
-  const ringOffset = habitRingOffset(done, total);
-  const ringMsg = !total ? "" : done === total ? "All done — closed the ring 🎯"
-    : `${total - done} more to close the ring`;
-
+  const ringMsg = done === total ? "All done. Ring closed." : `${total - done} more to close the ring.`;
   const ringCard = total ? `
-  <div class="card ring-card">
-    <div class="ring-wrap">
-      <svg width="84" height="84" viewBox="0 0 84 84">
-        <circle class="ring-track" cx="42" cy="42" r="${HABIT_RING_R}"/>
-        <circle class="ring-fill" cx="42" cy="42" r="${HABIT_RING_R}" stroke-dasharray="${HABIT_RING_C}" stroke-dashoffset="${ringOffset}"/>
+  <div class="habit-hero">
+    <div class="ring" style="width:${HABIT_RING_SIZE}px;height:${HABIT_RING_SIZE}px">
+      <svg width="${HABIT_RING_SIZE}" height="${HABIT_RING_SIZE}" viewBox="0 0 ${HABIT_RING_SIZE} ${HABIT_RING_SIZE}">
+        <circle class="ring-track" cx="${HABIT_RING_SIZE / 2}" cy="${HABIT_RING_SIZE / 2}" r="${HABIT_RING_R}" stroke-width="${HABIT_RING_STROKE}"/>
+        <circle class="ring-fill" id="habit-ring" cx="${HABIT_RING_SIZE / 2}" cy="${HABIT_RING_SIZE / 2}" r="${HABIT_RING_R}" stroke-width="${HABIT_RING_STROKE}"
+          stroke-dasharray="${HABIT_RING_C}" stroke-dashoffset="${habitRingOffset(done, total)}"/>
       </svg>
-      <div class="ring-label"><div class="ring-num">${done}</div><div class="ring-den">of ${total}</div></div>
+      <div class="ring-label"><span class="display">${done}<small>/${total}</small></span><small>TODAY</small></div>
     </div>
-    <div class="ring-text">
-      <h2>Today's habits</h2>
-      <p>${ringMsg}</p>
+    <div>
+      <div class="habit-hero-msg">${ringMsg}</div>
+      <div class="habit-hero-sub">${best > 0 ? `Best streak ${best} day${best === 1 ? "" : "s"}` : "Start a streak today"}</div>
     </div>
   </div>` : "";
 
@@ -2506,69 +2738,87 @@ function renderHabits(m) {
     const pop = state.habitPop === h.name && h.doneToday;
     return `
     <div class="habit-wrap${editing ? " editing" : ""}">
-      ${editing ? `<button class="habit-del" data-del-habit="${esc(h.name)}" aria-label="Remove ${esc(h.name)}">${icon("x", 15)}</button>` : ""}
+      ${editing ? `<button class="habit-del" data-del-habit="${esc(h.name)}" aria-label="Remove ${esc(h.name)}">${icon("trash", 18)}</button>` : ""}
       <button class="hcard ${h.doneToday ? "done" : ""}" data-habit="${i}" ${dis}>
-        <span class="hbox${pop ? " pop" : ""}">${h.doneToday ? "✓" : "—"}</span>
+        <span class="box${pop ? " pop" : ""}">${h.doneToday ? icon("check", 20, 3) : ""}</span>
         <span class="hinfo">
-          <span class="hname">${esc(h.name)}</span>
-          <span class="hstreak ${h.streak > 0 ? "hot" : ""}">${h.streak > 0 ? `${h.streak}🔥 day streak` : "no streak yet"}</span>
+          <span class="hname">${icon(habitIcon(h.name), 14)}<span>${esc(h.name)}</span></span>
+          <span class="hstreak">${h.streak > 0 ? `${h.streak} day streak` : "no streak yet"}</span>
         </span>
         <span class="heatmap">${h.history.map((d, j) =>
-          `<span class="hm-cell ${d ? "on" : ""} ${j === 13 ? "today" : ""}${pop && j === 13 ? " pop" : ""}"></span>`).join("")}</span>
+          `<span class="hm-cell${d ? " on" : ""}${j === 13 ? " today" : ""}${pop && j === 13 ? " pop" : ""}"></span>`).join("")}</span>
       </button>
     </div>`;
   }).join("");
 
   return `
   ${ringCard}
-  <div class="card">
+  <div class="card list">
     <h2>
-      <span>Habits <span class="h-extra muted">14-day history${state.busy ? " · saving…" : ""}</span></span>
-      ${total > 0 ? `<button class="text-btn" id="btn-habits-edit">${editing ? "Done" : "Edit"}</button>` : ""}
+      <span>Habits · 14-day history${state.busy ? " · saving…" : ""}</span>
+      ${total > 0 ? `<button class="link-btn" id="btn-habits-edit">${editing ? "Done" : "Edit"}</button>` : ""}
     </h2>
     ${total === 0 ? `<div class="empty">No habits yet — tap + to add one</div>` : ""}
     ${habitRows}
   </div>`;
 }
 
+/* ---------- Library ---------- */
+
 function renderArticles(m) {
   if (state.article) {
     const a = m.articles.find((x) => x.path === state.article);
     if (a) {
+      const meta = [a.author, `${a.minutes} min read`, a.created].filter(Boolean).join(" · ");
+      const kicker = (a.tags || []).slice(0, 2).join(" · ");
       return `
-      <button class="back-btn" id="btn-art-back">${icon("chevronLeft", 17)} All articles</button>
+      ${backLink("btn-art-back", state.articleReturn === "today" ? "Today" : "Library")}
       <article class="article">
+        ${kicker ? `<div class="art-kicker">${esc(kicker)}</div>` : ""}
         <h1>${esc(a.title)}</h1>
-        <div class="art-meta">${esc(a.created)}${a.author ? ` · ${esc(a.author)}` : ""} · ${a.minutes} min read</div>
+        <div class="art-meta muted">${esc(meta)}</div>
         ${mdToHtml(a.body.replace(/^#\s+.+\n/, ""))}
       </article>
-      <button class="art-float-back" id="btn-art-float-back" aria-label="Back to articles">${icon("chevronLeft", 22)}</button>`;
+      <button class="art-float-back" id="btn-art-float-back" aria-label="Back to articles">${icon("back", 22)}</button>`;
     }
     state.article = null;
   }
   if (!m.articles.length) return `<div class="empty">No research articles in the vault yet</div>`;
 
   const q = state.articleQuery.trim().toLowerCase();
-  const matches = q
-    ? m.articles.filter((a) =>
-        [a.title, a.excerpt, a.topic, a.author, a.body].some((f) => (f || "").toLowerCase().includes(q)))
-    : m.articles;
+  const tagCounts = {};
+  m.articles.forEach((a) => (a.tags || []).forEach((t) => { tagCounts[t] = (tagCounts[t] || 0) + 1; }));
+  const topTags = Object.keys(tagCounts).sort((x, y) => tagCounts[y] - tagCounts[x]).slice(0, 8);
+  if (state.articleTag && !topTags.includes(state.articleTag)) state.articleTag = "";
+  const matches = m.articles.filter((a) =>
+    (!state.articleTag || (a.tags || []).includes(state.articleTag)) &&
+    (!q || [a.title, a.excerpt, a.topic, a.author, a.body, (a.tags || []).join(" ")].some((f) => (f || "").toLowerCase().includes(q))));
 
   const search = `
     <div class="search-bar">
-      ${icon("search", 17)}
-      <input type="search" id="art-search" placeholder="Search articles…" value="${esc(state.articleQuery)}" autocomplete="off">
+      ${icon("search", 18)}
+      <input type="search" id="art-search" placeholder="Search ${m.articles.length} note${m.articles.length === 1 ? "" : "s"}" value="${esc(state.articleQuery)}" autocomplete="off">
       ${q ? `<button class="search-clear" id="art-search-clear" aria-label="Clear search">${icon("x", 16)}</button>` : ""}
-    </div>`;
+    </div>
+    ${topTags.length ? `<div class="chip-scroll">
+      <button class="fchip ${state.articleTag ? "" : "active"}" data-art-tag="">All</button>
+      ${topTags.map((t) => `<button class="fchip ${state.articleTag === t ? "active" : ""}" data-art-tag="${esc(t)}">${esc(t)}</button>`).join("")}
+    </div>` : ""}`;
 
   const list = matches.length
-    ? matches.map((a) => `
-      <button class="card art-card" data-article="${esc(a.path)}">
-        <div class="art-title">${esc(a.title)}</div>
-        ${a.excerpt ? `<div class="art-excerpt">${esc(a.excerpt)}</div>` : ""}
-        <div class="art-meta">${esc(a.created)}${a.topic ? ` · ${esc(a.topic)}` : ""} · ${a.minutes} min read</div>
-      </button>`).join("")
-    : `<div class="empty">No articles match "${esc(state.articleQuery)}"</div>`;
+    ? `<div class="art-list">${matches.map((a, i) => {
+        const meta = [a.author, `${a.minutes} min read`, a.created].filter(Boolean).join(" · ");
+        return `
+      <button class="art-card" data-article="${esc(a.path)}">
+        <span class="art-thumb${i % 2 ? " ink" : ""}">${esc((a.title.trim()[0] || "•").toUpperCase())}</span>
+        <span class="art-body">
+          <span class="art-title">${esc(a.title)}</span>
+          <span class="art-meta">${esc(meta)}</span>
+          ${(a.tags || []).length ? `<span class="art-tags">${a.tags.slice(0, 2).map((t) => `<span class="pill">${esc(t)}</span>`).join("")}</span>` : ""}
+        </span>
+      </button>`;
+      }).join("")}</div>`
+    : `<div class="empty">No articles match${q ? ` "${esc(state.articleQuery)}"` : ""}</div>`;
 
   return search + list;
 }
@@ -2577,73 +2827,117 @@ function renderArticles(m) {
 function renderStudyDoc() {
   const md = state.files.studyplan;
   if (!md) {
-    return `<button class="back-btn" id="btn-study-back">${icon("chevronLeft", 17)} Back</button>
+    return `${backLink("btn-study-back", "Today")}
       <div class="empty">Study plan not synced yet — pull to refresh.</div>`;
   }
   return `
-    <button class="back-btn" id="btn-study-back">${icon("chevronLeft", 17)} Back</button>
+    ${backLink("btn-study-back", "Today")}
     <article class="article">
       ${mdToHtml(stripFrontmatter(md))}
     </article>
-    <button class="art-float-back" id="btn-study-float-back" aria-label="Back">${icon("chevronLeft", 22)}</button>`;
+    <button class="art-float-back" id="btn-study-float-back" aria-label="Back">${icon("back", 22)}</button>`;
 }
+
+/* ---------- reminders (native Android notifications) ---------- */
+
+const HAS_NOTIF = typeof window.KernelNative !== "undefined" && typeof window.KernelNative.getReminders === "function";
+const REMINDER_ROWS = [
+  ["tasks", "Tasks", "Daily · only if something is left"],
+  ["habits", "Habits", "Daily · only if not all ticked"],
+  ["transport", "Transport", "Mon–Fri · unbooked ride + last call"],
+];
+function getReminders() { try { return JSON.parse(window.KernelNative.getReminders()); } catch { return {}; } }
+function saveReminders() {
+  const out = {};
+  REMINDER_ROWS.forEach(([k]) => {
+    const on = document.querySelector(`[data-rem-on="${k}"]`), t = document.querySelector(`[data-rem-time="${k}"]`);
+    if (on && t) out[k] = { on: on.checked, time: t.value || "09:00" };
+  });
+  window.KernelNative.setReminders(JSON.stringify(out));
+  if (Object.values(out).some((r) => r.on) && !window.KernelNative.notificationsEnabled()) window.KernelNative.requestNotifications();
+}
+window.__kernelNotif = () => { if (state.view === "settings") render(); };
+
+function remindersCard() {
+  if (!HAS_NOTIF) return "";
+  const cfg = getReminders();
+  const blocked = Object.values(cfg).some((r) => r.on) && !window.KernelNative.notificationsEnabled();
+  return `
+  <div class="card list">
+    <div class="set-head">${icon("bell", 18)}<span class="kicker">Reminders</span></div>
+    ${REMINDER_ROWS.map(([k, title, sub]) => {
+      const r = cfg[k] || { on: false, time: "09:00" };
+      return `<div class="rem-row">
+        <div class="rem-main"><b>${title}</b><span>${sub}</span></div>
+        <input type="time" class="rem-time" data-rem-time="${k}" value="${esc(r.time)}" aria-label="${title} reminder time">
+        <label class="switch"><input type="checkbox" data-rem-on="${k}" ${r.on ? "checked" : ""} aria-label="${title} reminder"><span></span></label>
+      </div>`;
+    }).join("")}
+    ${blocked ? `<p class="set-note warn">Notifications are blocked for Kernel — allow them in Android Settings → Apps → Kernel → Notifications.</p>` : ""}
+    <button class="ghost" id="btn-rem-test">Send a test notification</button>
+  </div>`;
+}
+
+/* ---------- Settings ---------- */
 
 function renderSettings() {
   const pref = getThemePref();
+  const tok = getToken();
   return `
+  ${backLink("btn-settings-back", "Back")}
+  <h1 class="page-title">Settings</h1>
+
   <div class="card">
-    <h2>More</h2>
-    <p class="muted" style="font-size:0.8rem;margin-bottom:10px">Off the tab bar, still in the app.</p>
-    <button class="show-toggle" id="btn-open-articles">📖 Read</button>
-    <button class="show-toggle" id="btn-open-clients">👥 Clients</button>
+    <div class="set-head">${icon("lock", 18)}<span class="kicker">GitHub token</span>
+      <span class="set-status" style="color:var(${tok ? "--ok" : "--wn"})">${tok ? "CONNECTED" : "NOT SET"}</span></div>
+    <div class="set-line">${tok ? `••••••••${esc(tok.slice(-4))}` : "No token"} · ${OWNER}/${REPO}</div>
+    <div class="set-inline">
+      <input type="password" id="inp-token" placeholder="${tok ? "Paste new token" : "github_pat_…"}" aria-label="GitHub token">
+      <button class="btn" id="btn-save-token">Save</button>
+    </div>
+    <p class="set-note">Needs Contents: Read &amp; write on the vault repo only.</p>
   </div>
+
   <div class="card">
-    <h2>Theme</h2>
+    <div class="set-head">${icon("refresh", 18)}<span class="kicker">Sync</span></div>
+    <div class="set-row"><span>Last synced ${state.lastSync ? timeAgo(state.lastSync) : "never"}</span><button class="link-btn lg" id="btn-sync-now">Sync now</button></div>
+    <div class="set-row"><span>Clear cache</span><button class="link-btn lg" id="btn-clear-cache">Clear</button></div>
+  </div>
+
+  ${remindersCard()}
+
+  <div class="card">
+    <div class="kicker">Theme</div>
     <div class="seg">
       <button data-theme-pref="auto" class="${pref === "auto" ? "active" : ""}">Auto</button>
       <button data-theme-pref="dark" class="${pref === "dark" ? "active" : ""}">Dark</button>
       <button data-theme-pref="light" class="${pref === "light" ? "active" : ""}">Light</button>
     </div>
-    <p class="muted" style="font-size:0.75rem;margin-top:8px">Auto follows your system setting. The ☀/☾ button up top is a quick switch.</p>
   </div>
-  <div class="card">
-    <h2>GitHub Token</h2>
-    <p class="muted" style="font-size:0.8rem;margin-bottom:10px">Fine-grained PAT · repo: <code>${OWNER}/${REPO}</code> · permission: Contents — <b>Read and write</b> (write is what lets you edit tasks)</p>
-    <input type="password" id="inp-token" placeholder="${getToken() ? "•••••••• (saved)" : "github_pat_…"}">
-    <div style="height:10px"></div>
-    <button class="btn" id="btn-save-token">Save token</button>
+
+  <div class="card nav-card">
+    <button class="nav-row" id="btn-open-indrive">${icon("car", 18)}<span>inDrive</span>${icon("chevr", 18)}</button>
+    <button class="nav-row" id="btn-open-clients">${icon("phone", 18)}<span>Clients</span>${icon("chevr", 18)}</button>
   </div>
-  <div class="card">
-    <h2>Data</h2>
-    <div class="row"><div class="r-main"><div class="r-title">Last sync</div></div>
-    <div class="r-end muted">${state.lastSync ? timeAgo(state.lastSync) : "never"}</div></div>
-    <div style="height:10px"></div>
-    <button class="btn" id="btn-sync-now">Sync now</button>
-    <div style="height:8px"></div>
-    <button class="btn secondary" id="btn-clear-cache">Clear cached data</button>
-    <div style="height:8px"></div>
-    <button class="btn danger" id="btn-logout">Forget token &amp; data</button>
-  </div>
-  <div class="card">
-    <h2>About <span class="h-extra">${APP_VERSION}</span></h2>
-    <p class="muted" style="font-size:0.8rem;line-height:1.5">Kernel — dashboard over a private vault repo. Data is fetched straight from GitHub on this device and cached locally. Task edits are committed back to the vault as you. Nothing is sent anywhere else.</p>
-    <p class="muted" style="font-size:0.72rem;margin-top:8px">Build ${APP_VERSION} · if this looks behind after a deploy, fully close and reopen the app.</p>
-  </div>`;
+
+  <div class="set-footer">Kernel ${esc(APP_VERSION)} · Data moves only between this phone and your GitHub repo.</div>
+
+  <button class="btn danger-outline" id="btn-logout">${icon("trash", 18)}Forget token &amp; data</button>`;
 }
 
 function renderSetup() {
   $("#view").innerHTML = `
   <div class="setup">
-    <h1>⌘ Kernel</h1>
-    <p>Your vault, in your pocket. To connect, this app needs a GitHub fine-grained personal access token scoped to your vault repo.</p>
-    <ol>
-      <li>GitHub → Settings → Developer settings → <b>Fine-grained tokens</b></li>
-      <li>Repository access: <b>only</b> <code>${OWNER}/${REPO}</code></li>
-      <li>Permissions → Repository → <b>Contents: Read and write</b> (write enables task editing — pick Read-only if you want view-only)</li>
-      <li>Generate, copy, paste below. It never leaves this device.</li>
-    </ol>
-    <input type="password" id="inp-token" placeholder="github_pat_…">
-    <button class="btn" id="btn-save-token">Connect</button>
+    <div class="setup-logo"></div>
+    <div class="setup-title">Kernel</div>
+    <div class="setup-tag">Your life. In sync.</div>
+    <div class="setup-steps">
+      <div><b>1</b><span>On GitHub, go to Settings → Developer settings and create a fine-grained token.</span></div>
+      <div><b>2</b><span>Give it access to <code>${OWNER}/${REPO}</code> only, with Contents: Read &amp; write.</span></div>
+      <div><b>3</b><span>Paste it below. It never leaves this phone.</span></div>
+    </div>
+    <input type="password" id="inp-token" placeholder="github_pat_…" aria-label="GitHub token">
+    <button class="btn xl" id="btn-save-token">Connect${icon("chevr", 20)}</button>
   </div>`;
   $("#btn-save-token").onclick = () => {
     const v = $("#inp-token").value.trim();
@@ -2653,14 +2947,33 @@ function renderSetup() {
   };
 }
 
+/* which section accent a view wears, and which views drop the top bar / tab bar */
+const VIEW_ACC = { today: "today", habits: "habits", money: "money", gym: "gym", articles: "read", indrive: "indrive", clients: "neutral", settings: "neutral" };
+const OFF_BAR = ["settings", "indrive", "clients"];
+
+function setChrome(acc, noBar, noTabs) {
+  document.body.dataset.acc = acc;
+  document.body.classList.toggle("no-bar", noBar);
+  document.body.classList.toggle("no-tabs", noTabs);
+}
+
 function render() {
   setSyncStatus();
   applyTheme();
-  if (!getToken()) { $("#fab").classList.add("hidden"); $("#fab-secondary").classList.add("hidden"); renderSetup(); return; }
+  if (!getToken()) {
+    $("#fab").classList.add("hidden"); $("#fab-secondary").classList.add("hidden");
+    setChrome("today", true, true);
+    renderSetup(); return;
+  }
 
   const m = buildModel();
   const v = state.view;
-  let html = state.error ? `<div class="error-banner">${esc(state.error)}</div>` : "";
+  let html = state.error
+    ? `<div class="banner err"><span class="b-ico">${icon("alert", 16)}</span><div class="b-txt"><b>Sync error</b><span>${esc(state.error)}</span></div><button class="b-btn" id="btn-banner-retry">Retry</button></div>`
+    : "";
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    html += `<div class="banner off"><span class="b-ico">${icon("cloud", 16)}</span><div class="b-txt"><span>You're offline. Changes will sync later.</span></div></div>`;
+  }
   if (state.studyDoc) html += renderStudyDoc();
   else if (!state.files.clients && !state.error) html += `<div class="empty">Loading vault…</div>`;
   else html += v === "today" ? renderToday(m)
@@ -2672,7 +2985,11 @@ function render() {
     : v === "gym" ? renderGym(m)
     : renderSettings();
   $("#view").innerHTML = html;
+  const retryBtn = $("#btn-banner-retry");
+  if (retryBtn) retryBtn.onclick = () => syncAll();
   $("#view").dataset.tab = state.studyDoc ? "study" : v;
+  const reading = state.studyDoc || (v === "articles" && !!state.article);
+  setChrome(state.studyDoc ? "read" : VIEW_ACC[v] || "today", reading || OFF_BAR.includes(v), OFF_BAR.includes(v));
 
   const viewKey = state.studyDoc ? "study" : state.article ? `article:${state.article}` : v;
   animateViewChange(_lastViewKey, viewKey);
@@ -2686,7 +3003,6 @@ function render() {
 
   /* settings has no tab — opening it via the gear clears the bar */
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === v));
-  $("#tabbar").dataset.active = v;
 
   /* the floating add button adds tasks on Today, habits on Habits (never over the reader) */
   $("#fab").classList.toggle("hidden", state.studyDoc || (v !== "today" && v !== "habits" && v !== "indrive" && v !== "gym"));
@@ -2718,6 +3034,8 @@ function render() {
     if (indriveOpen) indriveOpen.onclick = () => goToTab("indrive");
     const gymOpen = $("#btn-gym-open");
     if (gymOpen) gymOpen.onclick = () => goToTab("gym");
+    const moreT = $("#btn-tasks-more");
+    if (moreT) moreT.onclick = () => { state.tasksAll = !state.tasksAll; render(); };
 
     const tpl = transportPlan(m);
     if (tpl) {
@@ -2791,7 +3109,7 @@ function render() {
         /* the ring is a fresh SVG node every render, so a plain CSS transition
            on stroke-dashoffset has no prior value to animate from — drive it
            with the Web Animations API instead, from the pre-toggle fill to the new one */
-        const ring = document.querySelector(".ring-fill");
+        const ring = $("#habit-ring");
         if (ring) {
           ring.animate(
             [{ strokeDashoffset: habitRingOffset(doneBefore, total) }, { strokeDashoffset: habitRingOffset(doneAfter, total) }],
@@ -2806,8 +3124,9 @@ function render() {
       };
     });
     document.querySelectorAll("[data-del-habit]").forEach((b) => {
-      b.onclick = () => {
-        if (confirm(`Remove "${b.dataset.delHabit}" from habits? Past log entries are kept.`)) removeHabit(b.dataset.delHabit);
+      b.onclick = async () => {
+        const name = b.dataset.delHabit;
+        if (await confirmBox("Remove habit?", `"${name}" leaves the list. Past log entries are kept.`)) removeHabit(name);
       };
     });
     const editBtn = $("#btn-habits-edit");
@@ -2864,11 +3183,16 @@ function render() {
       upsertDebt({ name: state.debtEdit, amount, status: "✅ Paid", originalName: state.debtEdit });
     };
     const debtRemove = $("#btn-debt-remove");
-    if (debtRemove) debtRemove.onclick = () => {
-      if (!confirm(`Remove ${state.debtEdit} from the debt tracker? This deletes the summary row (the detail section stays as history).`)) return;
-      removeDebt(state.debtEdit);
+    if (debtRemove) debtRemove.onclick = async () => {
+      const name = state.debtEdit;
+      const d = m.debts.find((x) => x.name === name);
+      const amt = d && d.amount ? ` · ${d.amount.toLocaleString("en-US")} MAD` : "";
+      if (!(await confirmBox("Remove debt?", `${name}${amt} leaves the tracker. The detail section stays as history.`))) return;
+      removeDebt(name);
     };
   }
+  const subBack = $("#btn-sub-back");
+  if (subBack) subBack.onclick = () => goToTab(state.subFrom || "settings");
   if (v === "indrive") {
     document.querySelectorAll("[data-indrive-edit]").forEach((el) => {
       el.onclick = () => openIndriveSheet(el.dataset.indriveEdit);
@@ -2887,6 +3211,8 @@ function render() {
     });
     const planOpen = $("#btn-gym-plan");
     if (planOpen) planOpen.onclick = openPlanImage;
+    const hs = $("#btn-health-sync");
+    if (hs) hs.onclick = healthSyncNow;
   }
   if (v === "articles") {
     document.querySelectorAll("[data-article]").forEach((b) => {
@@ -2911,11 +3237,16 @@ function render() {
         if (again) { again.focus(); again.setSelectionRange(pos, pos); }
       };
     }
+    document.querySelectorAll("[data-art-tag]").forEach((b) => { b.onclick = () => { state.articleTag = b.dataset.artTag; render(); }; });
     const clr = $("#art-search-clear");
     if (clr) clr.onclick = () => { state.articleQuery = ""; render(); const s = $("#art-search"); if (s) s.focus(); };
   }
   if (v === "settings") {
-    $("#btn-open-articles").onclick = () => goToTab("articles");
+    $("#btn-settings-back").onclick = () => goToTab(state.settingsFrom || "today");
+    $("#btn-open-indrive").onclick = () => goToTab("indrive");
+    document.querySelectorAll("[data-rem-on],[data-rem-time]").forEach((el) => { el.onchange = () => { saveReminders(); render(); }; });
+    const remTest = $("#btn-rem-test");
+    if (remTest) remTest.onclick = () => { if (!window.KernelNative.notificationsEnabled()) window.KernelNative.requestNotifications(); window.KernelNative.testNotification(); };
     $("#btn-open-clients").onclick = () => goToTab("clients");
     document.querySelectorAll("[data-theme-pref]").forEach((b) => {
       b.onclick = () => setThemePref(b.dataset.themePref);
@@ -2926,7 +3257,10 @@ function render() {
     };
     $("#btn-sync-now").onclick = () => syncAll();
     $("#btn-clear-cache").onclick = () => { localStorage.removeItem(LS_CACHE); state.files = {}; state.lastSync = null; syncAll(); };
-    $("#btn-logout").onclick = () => { localStorage.clear(); state.files = {}; state.lastSync = null; render(); };
+    $("#btn-logout").onclick = async () => {
+      if (!(await confirmBox("Forget token and data?", "The token and every cached file are wiped from this phone. Your vault on GitHub is untouched.", "Forget"))) return;
+      localStorage.clear(); state.files = {}; state.lastSync = null; render();
+    };
   }
 }
 
@@ -2949,12 +3283,35 @@ addEventListener("scroll", () => {
   lastY = y;
 }, { passive: true });
 
+/* ---------- confirm popup (replaces the browser's confirm()) ---------- */
+
+let _confirmResolve = null;
+function confirmBox(title, body, okLabel = "Remove") {
+  if (_confirmResolve) _confirmResolve(false);
+  $("#confirm-title").textContent = title;
+  $("#confirm-body").textContent = body;
+  $("#confirm-ok").textContent = okLabel;
+  $("#confirm-sheet").classList.remove("hidden");
+  return new Promise((resolve) => { _confirmResolve = resolve; });
+}
+function closeConfirm(result) {
+  $("#confirm-sheet").classList.add("hidden");
+  const r = _confirmResolve;
+  _confirmResolve = null;
+  if (r) r(result);
+}
+
 /* ---------- task composer ---------- */
 
+function updateComposerCount() {
+  const n = $("#composer-text").value.split("\n").filter((l) => l.trim()).length;
+  $("#composer-add").textContent = n > 1 ? `Add ${n} tasks` : "Add";
+}
 function openComposer() {
   if (state.busy) return;
   $("#composer").classList.remove("hidden");
   buildComposerArticles();
+  updateComposerCount();
   $("#composer-text").focus();
 }
 function closeComposer() {
@@ -2964,16 +3321,24 @@ function closeComposer() {
   if (box) box.classList.add("hidden");
 }
 
-/* fill the composer's article picker — tapping a chip inserts a [[wikilink]] */
-function buildComposerArticles() {
-  const box = $("#composer-articles");
-  if (!box) return;
-  box.classList.add("hidden");
-  const arts = buildModel().articles || [];
-  box.innerHTML = arts.length
-    ? arts.map((a) => `<button type="button" class="art-chip" data-insert="[[${esc(a.name.replace(/\.md$/, ""))}|${esc(a.title)}]]">${esc(a.title)}</button>`).join("")
-    : `<div class="muted" style="font-size:0.8rem;padding:4px 0">No research articles synced yet.</div>`;
+/* "/" in the composer opens a live article picker — picking one replaces the "/query" with a [[wikilink]] */
+function composerSlashQuery(ta) {
+  const pos = ta.selectionStart ?? ta.value.length;
+  const m = ta.value.slice(0, pos).match(/(^|\s)\/([^\s/]*)$/);
+  return m ? { q: m[2].toLowerCase(), start: pos - m[2].length - 1, end: pos } : null;
 }
+function updateComposerSlash() {
+  const box = $("#composer-articles"), ta = $("#composer-text");
+  if (!box || !ta) return;
+  const sl = composerSlashQuery(ta);
+  if (!sl) { box.classList.add("hidden"); return; }
+  const arts = (buildModel().articles || []).filter((a) => !sl.q || a.title.toLowerCase().includes(sl.q) || a.name.toLowerCase().includes(sl.q)).slice(0, 6);
+  box.innerHTML = `<div class="slash-head">Articles${sl.q ? ` · "${esc(sl.q)}"` : ""}</div>` + (arts.length
+    ? arts.map((a) => `<button type="button" class="slash-item" data-insert="[[${esc(a.name.replace(/\.md$/, ""))}|${esc(a.title)}]]">${esc(a.title)}</button>`).join("")
+    : `<div class="slash-empty">No articles match.</div>`);
+  box.classList.remove("hidden");
+}
+function buildComposerArticles() { const box = $("#composer-articles"); if (box) box.classList.add("hidden"); }
 
 /* insert text at the textarea's cursor, with a separating space if needed */
 function insertAtCursor(ta, text) {
@@ -2991,12 +3356,14 @@ function insertAtCursor(ta, text) {
 
 function openHabitModal() {
   if (state.busy) return;
+  $("#habit-count").textContent = `${$("#habit-name").value.length}/60`;
   $("#habit-modal").classList.remove("hidden");
   $("#habit-name").focus();
 }
 function closeHabitModal() {
   $("#habit-modal").classList.add("hidden");
   $("#habit-name").value = "";
+  $("#habit-count").textContent = "0/60";
 }
 
 /* ---------- inDrive add/edit sheet ---------- */
@@ -3008,13 +3375,24 @@ function openIndriveSheet(editDate) {
   const d = (buildModel().indrive) || { price: 15, consumption: 6.5, rows: [] };
   const ex = editing ? d.rows.find((r) => r.date === editDate) : null;
   $("#id-sheet-title").textContent = editing ? "Edit entry" : "Add entry";
+  $("#id-date-label").textContent = editing ? "Date · locked" : "Date";
   $("#id-date").value = ex ? ex.date : todayIso();
   $("#id-date").readOnly = editing;
   $("#id-km").value = ex ? ex.km : "";
   $("#id-gross").value = ex ? ex.gross : "";
   $("#id-notes").value = ex ? ex.notes : "";
-  $("#id-sheet-hint").textContent = `Diesel is calculated for you at ${d.consumption} L/100km × ${d.price} MAD/L.`;
+  const calc = () => {
+    const km = parseFloat($("#id-km").value) || 0, gross = parseFloat($("#id-gross").value) || 0;
+    const diesel = Math.round((km / 100) * d.consumption * d.price * 100) / 100;
+    const net = Math.round((gross - diesel) * 100) / 100;
+    $("#id-sheet-hint").innerHTML = `<div class="split"><span>Diesel</span><b>${diesel.toLocaleString("en-US")} MAD</b></div>
+      <div class="split calc-net"><span>Net</span><span>${net.toLocaleString("en-US")} MAD</span></div>
+      <div class="calc-note">${d.consumption} L/100 km · ${d.price} MAD/L</div>`;
+  };
+  $("#id-km").oninput = calc; $("#id-gross").oninput = calc;
+  calc();
   $("#btn-indrive-save").textContent = editing ? "Save changes" : "Add entry";
+  $("#btn-indrive-remove").innerHTML = `${icon("trash", 16)}Remove entry`;
   $("#btn-indrive-remove").classList.toggle("hidden", !editing);
   $("#indrive-sheet").classList.remove("hidden");
   $("#id-km").focus();
@@ -3032,10 +3410,10 @@ function buildGymExerciseRows(letter, prefill) {
   box.innerHTML = GYM_WORKOUTS[letter].map((e) => {
     const p = prefill ? prefill.find((x) => x.exercise === e.name) : null;
     return `
-    <div class="gym-ex-row" data-gym-ex="${esc(e.name)}">
-      <div class="gym-ex-name">${e.emoji ? `${e.emoji} ` : ""}${esc(e.name)} <span class="muted">${esc(e.target)}</span></div>
-      <input type="number" inputmode="decimal" class="gym-ex-weight" placeholder="kg" value="${p && p.weight != null ? esc(String(p.weight)) : ""}">
-      <input type="text" inputmode="numeric" class="gym-ex-reps" placeholder="reps" value="${p ? esc(p.reps) : ""}">
+    <div class="gym-grid gym-ex-row" data-gym-ex="${esc(e.name)}">
+      <div class="gym-ex-name"><b>${esc(e.name)}</b><span>${esc(e.target)}</span></div>
+      <input type="number" inputmode="decimal" class="gym-ex-weight" placeholder="kg" aria-label="${esc(e.name)} kg" value="${p && p.weight != null ? esc(String(p.weight)) : ""}">
+      <input type="text" inputmode="numeric" class="gym-ex-reps" placeholder="reps" aria-label="${esc(e.name)} reps" value="${p ? esc(p.reps) : ""}">
     </div>`;
   }).join("");
 }
@@ -3064,6 +3442,7 @@ function openGymSheet(editKey) {
   $("#gym-date").value = date;
   $("#gym-date").readOnly = editing;
   $("#btn-gym-save").textContent = editing ? "Save changes" : "Save session";
+  $("#btn-gym-remove").innerHTML = `${icon("trash", 16)}Remove session`;
   $("#btn-gym-remove").classList.toggle("hidden", !editing);
   pickGymWorkout(letter, prefill);
   $("#gym-sheet").classList.remove("hidden");
@@ -3079,17 +3458,45 @@ function closeGymSheet() {
 function openHowTo(letter, i) {
   const e = GYM_WORKOUTS[letter] && GYM_WORKOUTS[letter][i];
   if (!e) return;
-  $("#howto-title").textContent = `${e.emoji ? e.emoji + " " : ""}${e.name}`;
-  $("#howto-body").textContent = e.how || "No form notes for this one yet.";
+  $("#howto-num").textContent = pad2(i + 1);
+  $("#howto-title").textContent = e.name;
+  /* the form notes are a short paragraph — one numbered row per sentence */
+  const steps = (e.how || "No form notes for this one yet.").split(/(?<=[.!?])\s+(?=[A-Z])/).filter(Boolean);
+  $("#howto-body").innerHTML = steps.map((t, n) => `<div><b>${n + 1}</b><span>${esc(t)}</span></div>`).join("");
   $("#howto-sheet").classList.remove("hidden");
 }
 function closeHowTo() {
   $("#howto-sheet").classList.add("hidden");
 }
 
-/* ---------- full plan image lightbox ---------- */
+/* ---------- weekly plan lightbox — drawn from GYM_SCHEDULE, tap anywhere to close ---------- */
 
 function openPlanImage() {
+  const dowNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const todayIdx = new Date().getDay();
+  const sub = (d) => {
+    const x = GYM_SCHEDULE[d];
+    if (x.kind !== "lift") return x.kind === "rest" ? "Full day off" : x.label.replace(/\s*\(optional\)/i, "");
+    const lifts = GYM_WORKOUTS[x.workout].filter((e) => !e.isTimed).map((e) => e.name.replace(/ Machine$/, ""));
+    return lifts.slice(0, 3).join(" · ") + (lifts.length > 3 ? ` · +${lifts.length - 3}` : "");
+  };
+  $("#plan-lightbox").innerHTML = `
+    <div class="plan-inner">
+      <div class="sheet-kicker" style="margin-bottom:0">Weekly plan</div>
+      ${[1, 2, 3, 4, 5, 6, 0].map((d) => `
+        <div class="plan-row${d === todayIdx ? " today" : ""}">
+          <span class="plan-day">${dowNames[d]}</span>
+          <div class="pr-main"><b>${esc(gymDayTitle(GYM_SCHEDULE[d]))}</b><span>${esc(sub(d))}</span></div>
+          ${icon(gymDayIcon(GYM_SCHEDULE[d]), 22)}
+        </div>`).join("")}
+      <div class="plan-foot">Tap anywhere to close ·<button type="button" id="btn-plan-img">Original plan</button></div>
+      <img class="plan-img hidden" id="plan-img" src="assets/gym-plan.webp" alt="Weekly workout plan and schedule">
+    </div>`;
+  $("#btn-plan-img").onclick = (e) => {
+    e.stopPropagation();
+    $("#plan-img").classList.remove("hidden");
+    $("#plan-img").scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   $("#plan-lightbox").classList.remove("hidden");
 }
 function closePlanImage() {
@@ -3104,12 +3511,13 @@ function openBwSheet(editDate) {
   const editing = !!editDate;
   const m = buildModel();
   const ex = editing && m.gym ? m.gym.bodyweights.find((b) => b.date === editDate) : null;
-  $("#bw-sheet-title").textContent = editing ? "Edit weigh-in" : "Log weight";
+  $("#bw-sheet-title").textContent = editing ? "Edit weigh-in" : "Log bodyweight";
   $("#bw-date").value = ex ? ex.date : todayIso();
   $("#bw-date").readOnly = editing;
   $("#bw-weight").value = ex ? String(ex.weight) : "";
   $("#bw-notes").value = ex ? ex.notes : "";
-  $("#btn-bw-save").textContent = editing ? "Save changes" : "Log weight";
+  $("#btn-bw-save").textContent = editing ? "Save changes" : "Save";
+  $("#btn-bw-remove").innerHTML = `${icon("trash", 16)}Remove weigh-in`;
   $("#btn-bw-remove").classList.toggle("hidden", !editing);
   $("#bw-sheet").classList.remove("hidden");
   $("#bw-weight").focus();
@@ -3123,6 +3531,9 @@ function closeBwSheet() {
 
 /* switch tabs from anywhere (tab bar, or a shortcut tile like the inDrive stat) */
 function goToTab(view) {
+  /* remember where drilled-in screens were opened from, for their back links */
+  if (view === "settings" && !OFF_BAR.includes(state.view)) state.settingsFrom = state.view;
+  if ((view === "indrive" || view === "clients") && state.view !== view) state.subFrom = state.view;
   state.view = view;
   state.article = null;
   state.articleReturn = null;
@@ -3134,6 +3545,7 @@ function goToTab(view) {
   closeHowTo();
   closeBwSheet();
   closePlanImage();
+  closeConfirm(false);
   showBars();
   render();
   scrollTo(0, 0);
@@ -3150,21 +3562,16 @@ $("#btn-home").onclick = () => {
   bounceIcon($("#btn-home"));
   goToTab("today");
 };
-$("#btn-settings").innerHTML = icon("gear", 17);
+$("#btn-settings").innerHTML = icon("sliders", 20);
 $("#btn-settings").onclick = () => {
   bounceIcon($("#btn-settings"));
-  state.view = "settings";
-  state.article = null;
-  state.studyDoc = false;
-  showBars();
-  render();
-  scrollTo(0, 0);
+  goToTab("settings");
 };
 $("#btn-theme").onclick = () => {
   setThemePref(effectiveTheme() === "light" ? "dark" : "light");
 };
 
-$("#fab").innerHTML = icon("plus", 24);
+$("#fab").innerHTML = icon("plus", 30, 3);
 $("#fab").onclick = () => {
   bounceIcon($("#fab"));
   if (state.view === "habits") return openHabitModal();
@@ -3172,17 +3579,27 @@ $("#fab").onclick = () => {
   if (state.view === "gym") return openGymSheet(null);
   return openComposer();
 };
-$("#fab-secondary").innerHTML = icon("scale", 18);
+$("#fab-secondary").innerHTML = icon("scale", 22);
 $("#fab-secondary").onclick = () => {
   bounceIcon($("#fab-secondary"));
   if (state.view === "gym") openBwSheet(null);
 };
 $("#composer-cancel").onclick = closeComposer;
 $("#composer").onclick = (e) => { if (e.target.id === "composer") closeComposer(); };
-$("#composer-link-toggle").onclick = () => $("#composer-articles").classList.toggle("hidden");
+$("#composer-text").addEventListener("input", updateComposerSlash);
+$("#composer-text").addEventListener("input", updateComposerCount);
+$("#composer-text").addEventListener("keyup", updateComposerSlash);
 $("#composer-articles").onclick = (e) => {
   const chip = e.target.closest("[data-insert]");
-  if (chip) insertAtCursor($("#composer-text"), chip.dataset.insert);
+  if (chip) {
+    const ta = $("#composer-text"), sl = composerSlashQuery(ta);
+    if (sl) {
+      ta.value = ta.value.slice(0, sl.start) + chip.dataset.insert + " " + ta.value.slice(sl.end);
+      const pos = sl.start + chip.dataset.insert.length + 1;
+      ta.focus(); ta.setSelectionRange(pos, pos);
+    } else insertAtCursor(ta, chip.dataset.insert);
+    $("#composer-articles").classList.add("hidden");
+  }
 };
 $("#composer-add").onclick = () => {
   const texts = $("#composer-text").value.split("\n");
@@ -3196,6 +3613,7 @@ $("#habit-add").onclick = () => {
   closeHabitModal();
   if (name) addHabit(name);
 };
+$("#habit-name").oninput = () => { $("#habit-count").textContent = `${$("#habit-name").value.length}/60`; };
 $("#habit-name").onkeydown = (e) => {
   if (e.key === "Enter") $("#habit-add").click();
   if (e.key === "Escape") closeHabitModal();
@@ -3214,9 +3632,9 @@ $("#btn-indrive-save").onclick = () => {
   closeIndriveSheet();
   render();
 };
-$("#btn-indrive-remove").onclick = () => {
+$("#btn-indrive-remove").onclick = async () => {
   const date = state.indriveEditDate;
-  if (!confirm(`Remove the ${date} entry? This can't be undone.`)) return;
+  if (!date || !(await confirmBox("Remove entry?", `The ${shortDate(date)} inDrive entry is deleted. This can't be undone.`))) return;
   removeIndriveEntry(date);
   closeIndriveSheet();
   render();
@@ -3245,10 +3663,10 @@ $("#btn-gym-save").onclick = () => {
   closeGymSheet();
   render();
 };
-$("#btn-gym-remove").onclick = () => {
+$("#btn-gym-remove").onclick = async () => {
   if (!state.gymEditKey) return;
   const [d, w] = state.gymEditKey.split("|");
-  if (!confirm(`Remove the ${d} ${WORKOUT_LABELS[w] || w} session? This can't be undone.`)) return;
+  if (!(await confirmBox("Remove session?", `The ${dowDate(d)} ${WORKOUT_LABELS[w] || w} session is deleted. This can't be undone.`))) return;
   removeGymSession(d, w);
   closeGymSheet();
   render();
@@ -3258,6 +3676,10 @@ $("#howto-sheet").onclick = (e) => { if (e.target.id === "howto-sheet") closeHow
 $("#btn-howto-close").onclick = closeHowTo;
 
 $("#plan-lightbox").onclick = closePlanImage;
+
+$("#confirm-sheet").onclick = (e) => { if (e.target.id === "confirm-sheet") closeConfirm(false); };
+$("#confirm-cancel").onclick = () => closeConfirm(false);
+$("#confirm-ok").onclick = () => closeConfirm(true);
 
 $("#bw-sheet").onclick = (e) => { if (e.target.id === "bw-sheet") closeBwSheet(); };
 $("#btn-bw-cancel").onclick = closeBwSheet;
@@ -3271,9 +3693,9 @@ $("#btn-bw-save").onclick = () => {
   closeBwSheet();
   render();
 };
-$("#btn-bw-remove").onclick = () => {
+$("#btn-bw-remove").onclick = async () => {
   const date = state.bwEdit;
-  if (!confirm(`Remove the ${date} weigh-in? This can't be undone.`)) return;
+  if (!date || !(await confirmBox("Remove weigh-in?", `The ${shortDate(date)} weigh-in is deleted. This can't be undone.`))) return;
   removeBodyweight(date);
   closeBwSheet();
   render();
@@ -3302,6 +3724,9 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+window.addEventListener("online", () => { syncAll(); });
+window.addEventListener("offline", () => { render(); });
+
 /* backgrounding, switching tabs, or refreshing kills any in-flight setTimeout
    debounce outright — fire pending saves now (with keepalive: true on the
    fetch calls) so the edit actually reaches GitHub instead of vanishing.
@@ -3312,7 +3737,44 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pagehide", () => flushAllPending());
 
+/* Android Back: step back one level inside the app. Returns true when handled; false lets the
+   system leave the app (only from Today with nothing open). Called by MainActivity. */
+window.kernelBack = function () {
+  const open = (id) => !$(id).classList.contains("hidden");
+  const sheets = [["#confirm-sheet", () => closeConfirm(false)], ["#plan-lightbox", closePlanImage],
+    ["#howto-sheet", closeHowTo], ["#composer", closeComposer], ["#habit-modal", closeHabitModal],
+    ["#indrive-sheet", closeIndriveSheet], ["#gym-sheet", closeGymSheet], ["#bw-sheet", closeBwSheet]];
+  for (const [id, close] of sheets) if (open(id)) { close(); return true; }
+  if (!getToken()) return false;
+  if (state.openClient) { state.openClient = null; render(); return true; }
+  if (state.taskEdit !== null) { state.taskEdit = null; render(); return true; }
+  if (state.debtEdit) { state.debtEdit = null; state.debtStatusPick = null; render(); return true; }
+  if (state.habitsEdit) { state.habitsEdit = false; render(); return true; }
+  if (state.studyDoc) { state.studyDoc = false; showBars(); render(); scrollTo(0, 0); return true; }
+  if (state.view === "articles" && state.article) { $("#btn-art-back").click(); return true; }
+  if (state.view === "settings") { goToTab(state.settingsFrom || "today"); return true; }
+  if (state.view === "indrive" || state.view === "clients") { goToTab(state.subFrom || "settings"); return true; }
+  if (state.view !== "today") { goToTab("today"); return true; }
+  return false;
+};
+
+/* Web build: route the browser / installed-PWA Back button through kernelBack too. One extra
+   history entry sits on top; each Back pops it, steps back in the app and re-pushes it. When
+   kernelBack has nothing left to do, Back really leaves. (The Android build handles Back natively.) */
+if (!window.KernelNative) {
+  history.replaceState({ kernel: "root" }, "");
+  history.pushState({ kernel: "app" }, "");
+  addEventListener("popstate", () => {
+    if (window.kernelBack()) history.pushState({ kernel: "app" }, "");
+    else history.back();
+  });
+}
+
 applyTheme();
 loadCache();
 render();
+/* first paint done — let the native splash fade out */
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => {
+  if (window.KernelNative && typeof window.KernelNative.appReady === "function") window.KernelNative.appReady();
+});
 if (getToken()) syncAll();
