@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "66";
+const WEB_VERSION = "67";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -125,60 +125,100 @@ const habitRingOffset = (done, total) => (total ? HABIT_RING_C * (1 - done / tot
    direction, like flipping through pages rather than just cutting */
 const TAB_ORDER = ["today", "habits", "money", "gym", "articles"];
 
-/* Weight-loss program (100kg → 85kg) — 10_Projects/Fitness/training-plan.md.
-   Hardcoded (not vault-parsed) so the logging form's fields always match the
-   plan exactly; if the plan changes, update both this and training-plan.md.
-   Replaced the original Full-Body Recomposition A/B split 2026-09-18 — see
-   assets/gym-plan.webp for the source plan image (viewable in-app from the
-   Gym tab hero card). */
+/* Skinny Fat Recomposition Program (100 kg → 85 kg), from assets/gym-plan.webp
+   (viewable in-app from the Gym hero). Three sessions done in rotation, not on
+   fixed weekdays: A → B → C → A … ; the next one is whatever follows the last
+   logged A/B/C session. Hardcoded (not vault-parsed) so the logging form always
+   matches the plan; if the plan changes, update this and the plan image together.
+   Replaced the Upper Body / Legs Day weekday plan 2026-10-03. */
 const GYM_WORKOUTS = {
-  UPPER: [
-    { name: "Warm-Up — Treadmill", target: "10 min", isTimed: true,
-      how: "Speed 4-6 km/h, incline 0-3%. Keep a comfortable pace — this is just to get your body warm and ready, not a workout in itself." },
-    { name: "Chest Press Machine", target: "3 x 10 (light)",
-      how: "Back flat on the pad, grips at chest height. Push forward until arms are extended without locking out hard, then control the return — don't let the weight stack slam." },
-    { name: "Lat Pulldown", target: "3 x 10 (light)",
-      how: "Sit tall, grab the bar wider than shoulder-width. Pull it down to your upper chest, keeping your back straight and squeezing your shoulder blades together, then let it rise back up with control." },
-    { name: "Shoulder Press Machine", target: "3 x 10 (light)",
-      how: "Back flat on the pad, grips at shoulder height. Push up without locking your elbows, then lower back to shoulder height with control. Keep your core tight." },
-    { name: "Biceps Curl", alt: "Machine or Dumbbells", target: "2 x 12",
-      how: "Keep your elbows close to your body throughout. Curl with a controlled movement, no swinging or using your back to heave the weight up." },
-    { name: "Triceps Push Down", alt: "Cable Machine", target: "2 x 12",
-      how: "Elbows tucked in close to your sides, stay fixed. Push the handle down fully, then control the return — don't let your elbows drift forward." },
-    { name: "Finisher — Bike", target: "25 min", isTimed: true,
-      how: "Comfortable, steady resistance and rhythm. Breathe and stay consistent for the full 25 minutes rather than pushing hard and fading early." },
+  A: [
+    { name: "Dumbbell Bench Press", target: "3 × 10",
+      cues: ["Keep feet flat, back on bench", "Lower to chest, press up", "Control the movement"] },
+    { name: "Incline Dumbbell Press", target: "3 × 12",
+      cues: ["Bench at 30–45°", "Lower to upper chest", "Press up, don't lock elbows"] },
+    { name: "Dumbbell Shoulder Press", target: "3 × 12",
+      cues: ["Keep core tight", "Press overhead", "Don't arch your back"] },
+    { name: "Cable Lateral Raise", target: "3 × 15",
+      cues: ["Slight bend in elbows", "Raise to shoulder height", "Control on the way down"] },
+    { name: "Triceps Pushdown (Cable)", target: "3 × 12",
+      cues: ["Keep elbows close to body", "Push down fully", "Control the return"] },
+    { name: "Overhead Triceps Extension", target: "2 × 15",
+      cues: ["Keep elbows in", "Lower behind head", "Extend fully, control"] },
+    { name: "Plank", target: "3 × 30 sec", isTimed: true,
+      cues: ["Keep body in a straight line", "Engage core, glutes and legs", "Don't let hips sag"] },
   ],
-  LEGS: [
-    { name: "Warm-Up — Bike", target: "15 min", isTimed: true,
-      how: "Moderate pace, light resistance — get your legs warm before the working sets." },
-    { name: "Leg Press", target: "3 x 10-12",
-      how: "Back on the pad, feet shoulder-width on the platform. Don't lock your knees out hard at the top, and control the lowering phase rather than dropping the weight." },
-    { name: "Seated Leg Curl", target: "3 x 10-12",
-      how: "Keep your hips down on the pad. Curl the weight in slowly, squeeze at the top, then control the return — don't let momentum do the work." },
-    { name: "Leg Extension", target: "2 x 12-15",
-      how: "Back on the pad. Extend until your legs are almost straight (don't lock out hard), pause briefly, then control the return." },
-    { name: "Calf Raises", target: "2 x 12-15",
-      how: "Full range of motion — a real stretch at the bottom, a real pause at the top. Control the descent rather than bouncing." },
-    { name: "Finisher — Walking (incline)", target: "30 min, 2% incline", isTimed: true,
-      how: "Speed 4-6 km/h at a 2% incline. Keep a steady pace for the full 30 minutes." },
+  B: [
+    { name: "Lat Pulldown", target: "3 × 10",
+      cues: ["Grasp bar wide", "Pull to upper chest", "Squeeze your back"] },
+    { name: "Seated Cable Row", target: "3 × 12",
+      cues: ["Keep back straight", "Pull to your midsection", "Squeeze shoulder blades"] },
+    { name: "Chest-Supported DB Row", target: "3 × 12",
+      cues: ["Chest on bench", "Pull towards hips", "Squeeze your back"] },
+    { name: "Face Pull (Cable)", target: "3 × 15",
+      cues: ["Use rope, pull to face", "Keep elbows high", "Squeeze rear delts"] },
+    { name: "EZ Bar Curl", target: "3 × 12",
+      cues: ["Keep elbows at your sides", "Full range of motion", "Control the weight"] },
+    { name: "Hammer Curl", target: "3 × 12",
+      cues: ["Neutral grip (palms in)", "Keep elbows still", "Control the movement"] },
+    { name: "Dead Hang", target: "2 × 20–30 sec", isTimed: true,
+      cues: ["Full arm extension", "Relax shoulders", "Hold as long as possible"] },
+  ],
+  C: [
+    { name: "Leg Press", target: "3 × 12",
+      cues: ["Feet shoulder-width", "Lower with control, press up", "Don't lock your knees"] },
+    { name: "Romanian Deadlift", target: "3 × 10",
+      cues: ["Slight bend in knees", "Hinge at hips, keep back straight", "Feel the stretch in hamstrings"] },
+    { name: "Leg Extension", target: "3 × 15",
+      cues: ["Control the movement", "Full knee extension", "Don't swing your legs"] },
+    { name: "Seated Leg Curl", target: "3 × 12",
+      cues: ["Keep hips on the seat", "Curl fully, control the return", "Feel the hamstrings"] },
+    { name: "Calf Raises", target: "3 × 20",
+      cues: ["Full range of motion", "Pause at the top", "Keep balance, control"] },
+    { name: "Hanging Knee Raise", alt: "Ab Wheel Rollout", target: "3 × 10",
+      cues: ["Hang from a bar", "Raise knees to chest", "Avoid swinging"],
+      altCues: ["Keep core tight", "Roll forward, don't arch your back", "Control the way back"] },
+    { name: "Incline Walk Finisher", target: "5 min", isTimed: true,
+      cues: ["Incline 6–10%", "Moderate pace", "5 minutes"] },
   ],
 };
-const WORKOUT_LABELS = { UPPER: "Upper Body", LEGS: "Legs Day" };
-/* Weekly schedule — day index from Date#getDay() (0=Sun). Mon/Fri: upper body
-   (same session repeated); Wed: legs; Tue/Thu: optional walk; Sat: light run;
-   Sun: full day off. */
-const GYM_SCHEDULE = {
-  0: { kind: "rest", label: "Day off" },
-  1: { kind: "lift", label: "Upper Body + Bike (50-60 min)", workout: "UPPER" },
-  2: { kind: "walk", label: "Day off or 1h fast walk (optional)" },
-  3: { kind: "lift", label: "Legs Day + Walk (60-75 min)", workout: "LEGS" },
-  4: { kind: "walk", label: "30 min fast walk (optional)" },
-  5: { kind: "lift", label: "Upper Body + Bike (50-60 min)", workout: "UPPER" },
-  6: { kind: "run", label: "Light run (15 min)" },
+const GYM_ROTATION = ["A", "B", "C"];
+const GYM_INFO = {
+  A: { title: "Upper Push", focus: "Chest · Shoulders · Triceps", warmup: "5 min treadmill easy jog", quote: "Stronger today. Leaner tomorrow." },
+  B: { title: "Upper Pull", focus: "Back · Biceps", warmup: "5 min rowing machine or bike", quote: "A stronger back builds a stronger you." },
+  C: { title: "Legs + Core", focus: "Football-aware — never the day before a match", warmup: "5 min bike", quote: "Legs today. A stronger tomorrow." },
 };
+const GYM_SESSION = "45–60 min @ 6:30 am";
+const GYM_TIPS = {
+  overload: ["Weeks 1–2: form over weight", "Weeks 3+: complete all reps cleanly, then add weight", "Every 4 weeks: deload — same exercises, ~40% less weight"],
+  key: ["Caloric deficit is the #1 lever for the belly", "2–3 L water daily · 7–8 h sleep", "Log every session in Kernel", "Weigh in 2–3× a week and track the trend"],
+  football: "If football falls on a gym day or the day after, do A or B instead. Never C the day before a match.",
+};
+/* the previous weekday plan — kept so sessions logged before 2026-10-03 still show and stay editable */
+const GYM_LEGACY = {
+  UPPER: ["Warm-Up — Treadmill|10 min", "Chest Press Machine|3 x 10 (light)", "Lat Pulldown|3 x 10 (light)", "Shoulder Press Machine|3 x 10 (light)",
+    "Biceps Curl|2 x 12", "Triceps Push Down|2 x 12", "Finisher — Bike|25 min"],
+  LEGS: ["Warm-Up — Bike|15 min", "Leg Press|3 x 10-12", "Seated Leg Curl|3 x 10-12", "Leg Extension|2 x 12-15",
+    "Calf Raises|2 x 12-15", "Finisher — Walking (incline)|30 min, 2% incline"],
+};
+const workoutExercises = (w) => GYM_WORKOUTS[w]
+  || (GYM_LEGACY[w] || []).map((x) => { const [name, target] = x.split("|"); return { name, target }; });
+const WORKOUT_LABELS = { A: "Upper Push", B: "Upper Pull", C: "Legs + Core", UPPER: "Upper Body", LEGS: "Legs Day" };
 /* the goal from the plan image — used to show weight-loss progress against
    the Bodyweight log the Gym tab already tracks */
 const GYM_GOAL = { startKg: 100, targetKg: 85 };
+
+/* where you are in the A → B → C rotation, from the newest logged A/B/C session */
+function gymRotation(m) {
+  const sessions = ((m && m.gym && m.gym.sessions) || []).filter((s) => GYM_ROTATION.includes(s.workout));
+  const last = sessions[0] || null;   // sessions are newest first
+  const after = (w) => GYM_ROTATION[(GYM_ROTATION.indexOf(w) + 1) % GYM_ROTATION.length];
+  return {
+    last,
+    doneToday: last && last.date === todayIso() ? last.workout : null,
+    next: last ? after(last.workout) : "A",
+  };
+}
 let _lastViewKey = null;
 
 /* #view's whole innerHTML is replaced on every render (no virtual-DOM diff),
@@ -2044,13 +2084,6 @@ function ringSvg(size, stroke, pct, extraCls = "") {
 
 const backLink = (id, label) => `<button class="back-link" id="${id}">${icon("back", 20)}${esc(label)}</button>`;
 
-/* short name for a schedule day — the long label stays as the subtitle */
-function gymDayTitle(day) {
-  return day.kind === "lift" ? WORKOUT_LABELS[day.workout]
-    : day.kind === "walk" ? "Optional walk" : day.kind === "run" ? "Light run" : "Rest day";
-}
-const gymDayIcon = (day) => (day.kind === "lift" ? "dumbbell" : day.kind === "walk" ? "walk" : day.kind === "run" ? "activity" : "moon");
-
 /* ---------- Today ---------- */
 
 function renderToday(m) {
@@ -2058,7 +2091,7 @@ function renderToday(m) {
   const weekday = now.toLocaleDateString("en-US", { weekday: "long" });
   const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const dis = state.busy ? "disabled" : "";
-  const gymToday = gymTodayLabel();
+  const rot = gymRotation(m);
 
   const TASK_LIMIT = 6;
   const allTasks = m.tasks || [];
@@ -2181,8 +2214,8 @@ function renderToday(m) {
   <button class="fill-tile" id="btn-gym-open" data-acc="gym" title="Open Gym">
     ${icon("dumbbell", 28)}
     <span class="ft-main">
-      <span class="ft-kicker">Gym · today</span>
-      <span class="ft-title">${esc(gymDayTitle(gymToday))}</span>
+      <span class="ft-kicker">${rot.doneToday ? `Gym · done today · next ${rot.next}` : `Gym · next · workout ${rot.next}`}</span>
+      <span class="ft-title">${esc(GYM_INFO[rot.doneToday || rot.next].title)}</span>
     </span>
     ${icon("chevr", 22)}
   </button>
@@ -2411,14 +2444,11 @@ function renderIndrive(m) {
 
 /* ---------- Gym ---------- */
 
-function gymTodayLabel() {
-  return GYM_SCHEDULE[new Date().getDay()] || { kind: "rest", label: "Rest" };
-}
-
 function renderGym(m) {
   const g = m.gym || { bodyweights: [], sessions: [], lastBodyweight: null };
-  const today = gymTodayLabel();
-  const weekday = new Date().toLocaleDateString("en-US", { weekday: "long" });
+  const rot = gymRotation(m);
+  const shown = rot.doneToday || rot.next;
+  const info = GYM_INFO[shown];
 
   /* weight-loss goal progress (100kg → 85kg), driven by the Bodyweight log
      that's already tracked here — no separate goal-entry UI needed */
@@ -2427,33 +2457,31 @@ function renderGym(m) {
   const goalPct = Math.max(0, Math.min(100, ((GYM_GOAL.startKg - cur) / span) * 100));
   const lostKg = g.lastBodyweight ? Math.round((GYM_GOAL.startKg - cur) * 10) / 10 : 0;
 
-  const nEx = today.kind === "lift" ? GYM_WORKOUTS[today.workout].length : 0;
-  const durTxt = (String(today.label).match(/\(([^)]*)\)/) || [])[1] || "";
-  const subTxt = today.kind === "lift" ? [durTxt, nEx ? `${nEx} exercises` : ""].filter(Boolean).join(" · ") : today.label;
   const heroCard = `
     <div class="hero-fill">
-      <div class="hf-kicker">Today · ${esc(weekday)}</div>
-      <div class="display gym-title">${esc(gymDayTitle(today))}</div>
-      ${subTxt ? `<div class="gym-sub">${esc(subTxt)}</div>` : ""}
+      <div class="hf-kicker">${rot.doneToday ? `Done today · Workout ${shown}` : `Next up · Workout ${shown}`}</div>
+      <div class="display gym-title">${esc(info.title)}</div>
+      <div class="gym-sub">${rot.doneToday
+        ? `Next: Workout ${rot.next} — ${esc(GYM_INFO[rot.next].title)}`
+        : `${esc(GYM_SESSION)} · ${GYM_WORKOUTS[shown].length} exercises · warm-up ${esc(info.warmup)}`}</div>
       <div class="hf-rule gym-goal"><b>${GYM_GOAL.startKg} kg → ${GYM_GOAL.targetKg} kg</b><span>${lostKg > 0 ? `${lostKg} kg lost` : "no weigh-in yet"}</span></div>
       <div class="hf-bar gym"><div style="width:${goalPct}%"></div></div>
       <div class="gym-now">${cur} kg now · ${goalPct.toFixed(0)}% to goal</div>
-      <button class="btn on-fill" id="btn-gym-plan">View full weekly plan${icon("ext", 16)}</button>
+      <button class="btn on-fill" id="btn-gym-plan">View full plan${icon("ext", 16)}</button>
     </div>`;
 
-  /* Mon → Sun strip; today highlighted */
-  const dowNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const todayIdx = new Date().getDay();
-  const weekCard = `
+  /* A → B → C rotation; the next session is highlighted */
+  const rotationCard = `
     <div class="card">
-      <h2>Weekly plan</h2>
-      <div class="gw-week">
-        ${[1, 2, 3, 4, 5, 6, 0].map((d) => `
-          <div class="gw-day ${d === todayIdx ? "today" : ""}" title="${esc(GYM_SCHEDULE[d].label)}">
-            <span class="gw-dot">${icon(gymDayIcon(GYM_SCHEDULE[d]), 18)}</span>
-            <span>${dowNames[d]}</span>
+      <h2>Rotation <span class="h-hint">A → B → C → A …</span></h2>
+      <div class="gw-rot">
+        ${GYM_ROTATION.map((w) => `
+          <div class="gw-day ${w === rot.next ? "today" : ""}${w === rot.doneToday ? " done" : ""}">
+            <span class="gw-dot">${w === rot.doneToday ? icon("check", 20, 3) : `<b>${w}</b>`}</span>
+            <span>${esc(GYM_INFO[w].title)}</span>
           </div>`).join("")}
       </div>
+      <p class="card-note gw-note">${esc(GYM_TIPS.football)}</p>
     </div>`;
 
   const bwCard = `
@@ -2472,7 +2500,7 @@ function renderGym(m) {
       <h2>Workout log</h2>
       ${g.sessions.length ? g.sessions.slice(0, 8).map((s) => `
         <div class="log-entry" data-gym-edit="${esc(s.date)}|${esc(s.workout)}">
-          <div class="split"><span>${esc(WORKOUT_LABELS[s.workout] || s.workout)}</span><span>${esc(dowDate(s.date))}</span></div>
+          <div class="split"><span>${GYM_ROTATION.includes(s.workout) ? `${s.workout} · ` : ""}${esc(WORKOUT_LABELS[s.workout] || s.workout)}</span><span>${esc(dowDate(s.date))}</span></div>
           <div class="r-sub">${s.exercises.map((e) => {
             const parts = [e.weight != null ? String(e.weight) : "", e.reps ? esc(e.reps) : ""].filter(Boolean);
             return `${esc(e.exercise)}${parts.length ? " " + parts.join("×") : ""}`;
@@ -2480,33 +2508,32 @@ function renderGym(m) {
         </div>`).join("") : `<div class="empty">Nothing logged yet — tap + to log a session</div>`}
     </div>`;
 
-  const workoutRef = (letter) => `
+  const workoutRef = (w) => `
     <div class="card list">
-      <h2 class="acc">${esc(WORKOUT_LABELS[letter])} <span class="h-hint">Hold an exercise for how-to</span></h2>
-      ${GYM_WORKOUTS[letter].map((e, i) => `
-        <div class="row ex-row" data-gym-how="${letter}:${i}">
+      <h2 class="acc">${w} · ${esc(GYM_INFO[w].title)} <span class="h-hint">Hold for how-to</span></h2>
+      <p class="card-note">${esc(GYM_INFO[w].focus)} · warm-up ${esc(GYM_INFO[w].warmup)}</p>
+      ${GYM_WORKOUTS[w].map((e, i) => `
+        <div class="row ex-row" data-gym-how="${w}:${i}">
           <span class="ex-n">${pad2(i + 1)}</span>
           <div class="r-main"><div class="r-title">${esc(e.name)}</div>${e.alt ? `<div class="r-sub">or ${esc(e.alt)}</div>` : ""}</div>
           <div class="r-end">${esc(e.target)}</div>
         </div>`).join("")}
     </div>`;
 
-  const tips = [
-    "Stay in a calorie deficit — healthy eating and portion control",
-    "Drink 2–3 L of water a day",
-    "Sleep 7–8 hours",
-    "Be consistent, not perfect",
-    "Track weight, measurements and how you feel",
-    "Adjust the plan if needed",
-  ];
+  const tipList = (items) => items.map((t, i) => `<div><span>${pad2(i + 1)}</span>${esc(t)}</div>`).join("");
   const tipsCard = `
     <div class="card">
-      <h2>Tips for success</h2>
-      <div class="tips">${tips.map((t, i) => `<div><span>${pad2(i + 1)}</span>${esc(t)}</div>`).join("")}</div>
+      <h2>Progressive overload</h2>
+      <div class="tips">${tipList(GYM_TIPS.overload)}</div>
+      <h2 class="tips-h">Key tips</h2>
+      <div class="tips">${tipList(GYM_TIPS.key)}</div>
     </div>`;
 
-  const order = today.kind === "lift" && today.workout === "LEGS" ? ["LEGS", "UPPER"] : ["UPPER", "LEGS"];
-  return heroCard + weekCard + healthCard() + workoutRef(order[0]) + sessionsCard + bwCard + workoutRef(order[1]) + tipsCard;
+  /* the session to do (or done) first, then the rest of the rotation in order */
+  const i0 = GYM_ROTATION.indexOf(shown);
+  const order = [0, 1, 2].map((k) => GYM_ROTATION[(i0 + k) % 3]);
+  return heroCard + rotationCard + healthCard() + workoutRef(order[0]) + sessionsCard + bwCard
+    + workoutRef(order[1]) + workoutRef(order[2]) + tipsCard;
 }
 
 /* ---------- Finances ---------- */
@@ -3407,7 +3434,7 @@ function closeIndriveSheet() {
 function buildGymExerciseRows(letter, prefill) {
   const box = $("#gym-exercise-rows");
   if (!box) return;
-  box.innerHTML = GYM_WORKOUTS[letter].map((e) => {
+  box.innerHTML = workoutExercises(letter).map((e) => {
     const p = prefill ? prefill.find((x) => x.exercise === e.name) : null;
     return `
     <div class="gym-grid gym-ex-row" data-gym-ex="${esc(e.name)}">
@@ -3430,7 +3457,9 @@ function openGymSheet(editKey) {
   if (state.busy) return;
   state.gymEditKey = editKey || null;
   const editing = !!editKey;
-  let date = todayIso(), letter = gymTodayLabel().workout || "UPPER", prefill = null;
+  /* a new session defaults to the next workout in the rotation (or the one already logged today) */
+  const rot = gymRotation(buildModel());
+  let date = todayIso(), letter = rot.doneToday || rot.next, prefill = null;
   if (editing) {
     const [d, w] = editKey.split("|");
     date = d; letter = w;
@@ -3460,37 +3489,35 @@ function openHowTo(letter, i) {
   if (!e) return;
   $("#howto-num").textContent = pad2(i + 1);
   $("#howto-title").textContent = e.name;
-  /* the form notes are a short paragraph — one numbered row per sentence */
-  const steps = (e.how || "No form notes for this one yet.").split(/(?<=[.!?])\s+(?=[A-Z])/).filter(Boolean);
-  $("#howto-body").innerHTML = steps.map((t, n) => `<div><b>${n + 1}</b><span>${esc(t)}</span></div>`).join("");
+  const rows = (cues) => cues.map((t, n) => `<div><b>${n + 1}</b><span>${esc(t)}</span></div>`).join("");
+  $("#howto-body").innerHTML = rows(e.cues || ["No form notes for this one yet."])
+    + (e.alt && e.altCues ? `<div class="howto-alt"><span>Or: ${esc(e.alt)}</span></div>${rows(e.altCues)}` : "");
   $("#howto-sheet").classList.remove("hidden");
 }
 function closeHowTo() {
   $("#howto-sheet").classList.add("hidden");
 }
 
-/* ---------- weekly plan lightbox — drawn from GYM_SCHEDULE, tap anywhere to close ---------- */
+/* ---------- plan lightbox — the A/B/C rotation drawn from GYM_WORKOUTS, tap anywhere to close ---------- */
 
 function openPlanImage() {
-  const dowNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const todayIdx = new Date().getDay();
-  const sub = (d) => {
-    const x = GYM_SCHEDULE[d];
-    if (x.kind !== "lift") return x.kind === "rest" ? "Full day off" : x.label.replace(/\s*\(optional\)/i, "");
-    const lifts = GYM_WORKOUTS[x.workout].filter((e) => !e.isTimed).map((e) => e.name.replace(/ Machine$/, ""));
-    return lifts.slice(0, 3).join(" · ") + (lifts.length > 3 ? ` · +${lifts.length - 3}` : "");
-  };
+  const rot = gymRotation(buildModel());
+  const sub = (w) => GYM_WORKOUTS[w].map((e) => e.name.replace(/ \(Cable\)$/, "")).slice(0, 3).join(" · ") + ` · +${GYM_WORKOUTS[w].length - 3}`;
   $("#plan-lightbox").innerHTML = `
     <div class="plan-inner">
-      <div class="sheet-kicker" style="margin-bottom:0">Weekly plan</div>
-      ${[1, 2, 3, 4, 5, 6, 0].map((d) => `
-        <div class="plan-row${d === todayIdx ? " today" : ""}">
-          <span class="plan-day">${dowNames[d]}</span>
-          <div class="pr-main"><b>${esc(gymDayTitle(GYM_SCHEDULE[d]))}</b><span>${esc(sub(d))}</span></div>
-          ${icon(gymDayIcon(GYM_SCHEDULE[d]), 22)}
+      <div class="sheet-kicker" style="margin-bottom:0">Skinny fat recomposition · ${GYM_GOAL.startKg} → ${GYM_GOAL.targetKg} kg</div>
+      ${GYM_ROTATION.map((w) => `
+        <div class="plan-row${w === rot.next ? " today" : ""}">
+          <span class="plan-day">${w}</span>
+          <div class="pr-main"><b>${esc(GYM_INFO[w].title)}</b><span>${esc(sub(w))}</span></div>
+          ${icon(w === rot.doneToday ? "check" : "dumbbell", 22)}
         </div>`).join("")}
+      <div class="plan-facts">
+        <div><b>Session</b>${esc(GYM_SESSION)} · A → B → C → A …</div>
+        <div><b>Football</b>${esc(GYM_TIPS.football)}</div>
+      </div>
       <div class="plan-foot">Tap anywhere to close ·<button type="button" id="btn-plan-img">Original plan</button></div>
-      <img class="plan-img hidden" id="plan-img" src="assets/gym-plan.webp" alt="Weekly workout plan and schedule">
+      <img class="plan-img hidden" id="plan-img" src="assets/gym-plan.webp" alt="Skinny fat recomposition program: workouts A, B and C">
     </div>`;
   $("#btn-plan-img").onclick = (e) => {
     e.stopPropagation();
@@ -3652,7 +3679,7 @@ $("#btn-gym-save").onclick = () => {
   const date = ($("#gym-date").value || "").trim();
   const workout = state.gymWorkoutPick;
   if (!date) { state.error = "Pick a date."; return render(); }
-  if (!workout) { state.error = "Pick Upper Body or Legs Day."; return render(); }
+  if (!workout) { state.error = "Pick workout A, B or C."; return render(); }
   const entries = [...document.querySelectorAll(".gym-ex-row")].map((row) => ({
     exercise: row.dataset.gymEx,
     weight: num(row.querySelector(".gym-ex-weight").value),

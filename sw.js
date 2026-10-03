@@ -2,7 +2,7 @@
    Network-first means a deploy shows up on the next open — no stale-mix of old CSS
    with new HTML. Vault data is never cached here (it lives in localStorage,
    fetched live from the GitHub API). */
-const CACHE = "kernel-shell-v66"; // keep in sync with WEB_VERSION in app.js
+const CACHE = "kernel-shell-v67"; // keep in sync with WEB_VERSION in app.js
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "fonts/dm-sans-var.ttf", "fonts/bricolage-grotesque-var.ttf", "assets/gym-plan.webp"];
 
 self.addEventListener("install", (e) => {

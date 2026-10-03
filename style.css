@@ -588,6 +588,14 @@ input[readonly] { color: var(--mu); }
 .gw-day { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 10px; font-weight: 800; color: var(--mu); }
 .gw-dot { width: 100%; aspect-ratio: 1; border-radius: 14px; border: 2px solid var(--ru); display: grid; place-items: center; color: var(--tx); }
 .gw-day.today { color: var(--at); }
+/* A → B → C rotation tiles */
+.gw-rot { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; }
+.gw-rot .gw-day { font-size: 11px; }
+.gw-rot .gw-dot { aspect-ratio: auto; height: 56px; }
+.gw-dot b { font-family: var(--font-display); font-size: 24px; font-weight: 800; }
+.gw-day.done { color: var(--ok); }
+.gw-day.done .gw-dot { border-color: var(--ok); color: var(--ok); }
+.gw-note { margin: 12px 0 0; }
 .gw-day.today .gw-dot { background: var(--a); border-color: var(--a); color: var(--ao); }
 
 .ex-row { min-height: 58px; cursor: pointer; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
@@ -608,6 +616,7 @@ input[readonly] { color: var(--mu); }
 .health-sync { margin-top: 6px; }
 .tips { font-size: 13px; line-height: 1.7; margin-top: 8px; }
 .tips span { display: inline-block; width: 26px; font-weight: 800; color: var(--at); }
+.card h2.tips-h { margin-top: 16px; }
 
 /* ---------- Library ---------- */
 
@@ -874,6 +883,7 @@ input[readonly] { color: var(--mu); }
 .howto-steps div { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hr); }
 .howto-steps div:last-child { border-bottom: none; }
 .howto-steps b { color: var(--at); flex-shrink: 0; width: 12px; }
+.howto-steps .howto-alt { padding-top: 14px; font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--at); }
 
 /* weekly plan lightbox */
 .plan-lightbox { justify-content: flex-start !important; background: var(--bg); padding: calc(var(--safe-t) + 52px) 16px calc(var(--safe-b) + 16px); overflow-y: auto; cursor: zoom-out; }
@@ -887,6 +897,9 @@ input[readonly] { color: var(--mu); }
 .plan-row .pr-main { flex: 1; min-width: 0; }
 .plan-row .pr-main b { display: block; font-size: 17px; font-weight: 800; }
 .plan-row .pr-main span { font-size: 12px; opacity: 0.8; }
+.plan-facts { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding: 12px 14px; border: 1.5px solid var(--ru); border-radius: 18px; font-size: 13px; line-height: 1.45; }
+.plan-facts div { display: grid; grid-template-columns: 84px 1fr; align-items: baseline; }
+.plan-facts b { display: block; font-size: 10px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mu); }
 .plan-foot { text-align: center; font-size: 12px; color: var(--mu); margin-top: 8px; }
 .plan-foot button { background: none; border: none; font-size: 12px; font-weight: 800; color: var(--at); margin-left: 4px; }
 .plan-img { max-width: 100%; border-radius: 18px; margin-top: 4px; }

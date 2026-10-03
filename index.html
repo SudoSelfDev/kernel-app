@@ -20,7 +20,7 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preload" href="fonts/dm-sans-var.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="preload" href="fonts/bricolage-grotesque-var.ttf" as="font" type="font/ttf" crossorigin>
-  <link rel="stylesheet" href="style.css?v=66">
+  <link rel="stylesheet" href="style.css?v=67">
 </head>
 <body data-acc="today">
   <header id="topbar">
@@ -92,8 +92,9 @@
       <div class="sheet-kicker">Gym</div>
       <h3 class="sheet-title" id="gym-sheet-title">Log workout</h3>
       <div class="seg acc lg" id="gym-workout-pick">
-        <button type="button" data-gym-pick="UPPER">Upper Body</button>
-        <button type="button" data-gym-pick="LEGS">Legs Day</button>
+        <button type="button" data-gym-pick="A">A · Push</button>
+        <button type="button" data-gym-pick="B">B · Pull</button>
+        <button type="button" data-gym-pick="C">C · Legs</button>
       </div>
       <div><label class="flabel" for="gym-date">Date</label><input type="date" id="gym-date"></div>
       <div class="gym-grid head"><span>Exercise</span><span>Kg</span><span>Reps</span></div>
@@ -155,6 +156,6 @@
     <button data-view="articles" data-icon="book" data-acc="read" class="tab"><span class="ticon"></span>Library</button>
   </nav>
 
-  <script src="app.js?v=66"></script>
+  <script src="app.js?v=67"></script>
 </body>
 </html>
