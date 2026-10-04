@@ -20,7 +20,7 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preload" href="fonts/dm-sans-var.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="preload" href="fonts/bricolage-grotesque-var.ttf" as="font" type="font/ttf" crossorigin>
-  <link rel="stylesheet" href="style.css?v=67">
+  <link rel="stylesheet" href="style.css?v=68">
 </head>
 <body data-acc="today">
   <header id="topbar">
@@ -124,6 +124,29 @@
     </div>
   </div>
 
+  <div id="plan-day-sheet" class="sheet-backdrop center hidden" data-acc="gym">
+    <div class="sheet">
+      <div class="sheet-kicker">Week plan</div>
+      <h3 class="sheet-title" id="plan-day-title">Plan the day</h3>
+      <p class="wk-note hidden" id="plan-day-warn"></p>
+      <div class="plan-opts" id="plan-day-opts"></div>
+      <button class="btn secondary lg" id="plan-day-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <div id="gym-days-sheet" class="sheet-backdrop center hidden" data-acc="gym">
+    <div class="sheet">
+      <div class="sheet-kicker">Week plan</div>
+      <h3 class="sheet-title">Gym days</h3>
+      <p class="hint">The planner suggests the next workout in the rotation on these days. Other days are rest unless you plan them.</p>
+      <div class="day-chips" id="gym-days-chips"></div>
+      <div class="btn-row">
+        <button class="btn secondary" id="gym-days-cancel">Cancel</button>
+        <button class="btn" id="gym-days-save">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div id="howto-sheet" class="sheet-backdrop center hidden" data-acc="gym">
     <div class="sheet">
       <div class="howto-num" id="howto-num">01</div>
@@ -156,6 +179,6 @@
     <button data-view="articles" data-icon="book" data-acc="read" class="tab"><span class="ticon"></span>Library</button>
   </nav>
 
-  <script src="app.js?v=67"></script>
+  <script src="app.js?v=68"></script>
 </body>
 </html>

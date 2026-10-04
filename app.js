@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "67";
+const WEB_VERSION = "68";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -54,7 +54,8 @@ const state = {
   transportWeek: null, // 7-day strip on the transport card: null = auto, true/false = user choice
   indriveEditDate: null, // date (YYYY-MM-DD) of the row open in the add/edit sheet, or null for a new entry
   gymEditKey: null, // "date|workout" of the session open in the gym sheet, or null for a new session
-  gymWorkoutPick: null, // "UPPER" | "LEGS" chosen in the currently-open gym sheet (before save)
+  gymWorkoutPick: null, // "A" | "B" | "C" chosen in the currently-open gym sheet (before save)
+  gymWeek: 0, // Gym tab week plan: 0 = this week, 1 = next week
   bwEdit: null, // date of the bodyweight row open in the log/edit sheet, or null for a new entry
   tasksAll: false, // show every Today task instead of the first few
   health: null, // Samsung Health / Health Connect snapshot (native Android build only)
@@ -219,6 +220,69 @@ function gymRotation(m) {
     next: last ? after(last.workout) : "A",
   };
 }
+
+/* ---------- week planner ---------- */
+
+const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const GYM_DEFAULT_DAYS = [1, 3, 5];            // Mon, Wed, Fri until you change them in the planner
+const PLAN_VALUES = ["A", "B", "C", "Rest", "Football"];
+const normPlan = (v) => PLAN_VALUES.find((p) => p.toLowerCase() === String(v || "").trim().toLowerCase()) || null;
+
+/* The week, Mon → Sun (offset 0 = this week, 1 = next). Each future day is a pinned choice
+   (A/B/C/Rest/Football) or a suggestion: on your gym days the rotation carries on from the
+   last logged session, so a skipped or swapped workout shifts the rest of the week. C is
+   never suggested the day before or after football (A takes its place and C waits); a C you
+   pin there yourself is kept but flagged. Past days show what you logged. */
+function weekSchedule(m, offset = 0) {
+  const g = (m && m.gym) || { sessions: [], weekPlan: {}, gymDays: GYM_DEFAULT_DAYS };
+  const plan = g.weekPlan || {}, gymDays = g.gymDays || GYM_DEFAULT_DAYS;
+  const rot = gymRotation(m);
+  const after = (w) => GYM_ROTATION[(GYM_ROTATION.indexOf(w) + 1) % GYM_ROTATION.length];
+  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  const isFootball = (d) => plan[isoOf(d)] === "Football";
+  const nearMatch = (d) => isFootball(addDays(d, 1)) || isFootball(addDays(d, -1));
+  const logged = {};
+  (g.sessions || []).forEach((s) => { if (!logged[s.date]) logged[s.date] = s.workout; });   // old-plan sessions count as done too
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayKey = isoOf(today);
+  const monday0 = addDays(today, -((today.getDay() + 6) % 7));
+  const first = addDays(monday0, 7 * offset), last = addDays(first, 6);
+  let pointer = rot.next;
+  const days = [], notes = [];
+  for (let d = new Date(monday0); d <= last; d = addDays(d, 1)) {
+    const key = isoOf(d), pin = plan[key] || null, gymDay = gymDays.includes(d.getDay());
+    let e;
+    if (logged[key] && key <= todayKey) e = { kind: "done", w: logged[key] };
+    else if (key < todayKey) {
+      const planned = pin ? /^[ABC]$/.test(pin) : gymDay;
+      e = { kind: pin === "Football" ? "football" : planned ? "skipped" : "rest" };
+    }
+    else if (pin === "Rest" || pin === "Football") e = { kind: pin.toLowerCase(), pinned: true };
+    else if (pin) {
+      e = { kind: "gym", w: pin, pinned: true, warn: pin === "C" && nearMatch(d) };
+      pointer = after(pin);
+    } else if (gymDay) {
+      if (pointer === "C" && nearMatch(d)) {
+        e = { kind: "gym", w: "A", moved: true };    // C waits for the next safe gym day
+      } else { e = { kind: "gym", w: pointer }; pointer = after(pointer); }
+    } else e = { kind: "rest" };
+    if (d >= first) {
+      days.push({ date: key, d: new Date(d), dow: DOW_SHORT[d.getDay()], today: key === todayKey, past: key < todayKey, ...e });
+      if (e.moved) notes.push(`C moved off ${DOW_SHORT[d.getDay()]} — football the day ${isFootball(addDays(d, 1)) ? "after" : "before"}`);
+      if (e.warn) notes.push(`${DOW_SHORT[d.getDay()]}: C next to a football day — the plan says A or B`);
+    }
+  }
+  return { days, notes, gymDays, offset };
+}
+
+/* today's plan, and the first gym day from today on (looking into next week if needed) */
+function gymPlanToday(m) {
+  const all = [...weekSchedule(m, 0).days, ...weekSchedule(m, 1).days];
+  const today = all.find((x) => x.today);
+  const nextGym = all.find((x) => !x.past && x.kind === "gym");
+  return { today, nextGym };
+}
 let _lastViewKey = null;
 
 /* #view's whole innerHTML is replaced on every render (no virtual-DOM diff),
@@ -321,6 +385,7 @@ const ICONS = {
   lock: "M5 11h14v10H5z M8 11V7a4 4 0 0 1 8 0v4",
   scale: "M12 3v18 M5 21h14 M3 7h18 M6 7l-3 7a3 3 0 0 0 6 0z M18 7l-3 7a3 3 0 0 0 6 0z",
   walk: "M13 4a1 1 0 1 0 2 0 1 1 0 1 0-2 0 M8 21l3-7 M11 14l-3-3 3-4 3 3 3 1 M14 10l1 11",
+  ball: "M2 12a10 10 0 1 0 20 0 10 10 0 1 0-20 0 M12 7.5l4.3 3.1-1.6 5h-5.4l-1.6-5z M12 7.5V2.5 M16.3 10.6l4.9-1.6 M14.7 15.6l3 4.1 M9.3 15.6l-3 4.1 M7.7 10.6 2.8 9",
 };
 
 const icon = (name, size = 20, stroke = 2) =>
@@ -1417,7 +1482,20 @@ function buildModel() {
     const sessions = [...sessionMap.values()].sort((a, b) => b.date.localeCompare(a.date));
     const lastSession = sessions[0] || null;
 
-    m.gym = { bodyweights, sessions, lastSession, lastBodyweight: bodyweights[0] || null };
+    /* week planner: "## Week Plan" holds the usual gym days and the days you pinned by hand */
+    const planBody = section(t, "## Week Plan");
+    const weekPlan = {};
+    parseTable(planBody).forEach((r) => {
+      const vals = Object.values(r);
+      const date = (vals[0] || "").trim(), val = normPlan(vals[1]);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date) && val) weekPlan[date] = val;
+    });
+    const daysLine = (planBody.match(/^\*\*Gym days:\*\*\s*(.+)$/m) || [])[1];
+    const gymDays = daysLine
+      ? DOW_SHORT.map((d, i) => (new RegExp(`\\b${d}`, "i").test(daysLine) ? i : -1)).filter((i) => i >= 0)
+      : GYM_DEFAULT_DAYS;
+
+    m.gym = { bodyweights, sessions, lastSession, lastBodyweight: bodyweights[0] || null, weekPlan, gymDays };
   }
 
   if (f.daily && typeof f.daily.text === "string") {
@@ -2057,6 +2135,56 @@ function removeGymSession(date, workout) {
   applyGymChange(lines.join("\n"));
 }
 
+/* make sure the gym log has a "## Week Plan" section (gym-days line + Date | Plan table) */
+function ensureWeekPlan(lines) {
+  let h = lines.findIndex((l) => /^##\s+week plan/i.test(l.trim()));
+  if (h === -1) {
+    while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+    lines.push("", "## Week Plan", "", `**Gym days:** ${GYM_DEFAULT_DAYS.map((i) => DOW_SHORT[i]).join(", ")}`, "", "| Date | Plan |", "|---|---|", "");
+    return lines;
+  }
+  if (!gymTableRange(lines, /^##\s+week plan/i)) {
+    let at = h + 1;
+    while (at < lines.length && !/^#+\s/.test(lines[at].trim()) && lines[at].trim() !== "" ) at++;
+    lines.splice(at, 0, "", "| Date | Plan |", "|---|---|");
+  }
+  return lines;
+}
+
+/* pin a day to A / B / C / Rest / Football, or clear it (value null) so the planner suggests it again */
+function setWeekPlan(date, value) {
+  const lines = ensureWeekPlan(gymText().split("\n"));
+  const range = gymTableRange(lines, /^##\s+week plan/i);
+  if (!range) return;
+  let rowIdx = -1;
+  for (let i = range.start + 2; i <= range.end; i++) {
+    if ((lines[i].split("|")[1] || "").trim() === date) { rowIdx = i; break; }
+  }
+  if (value && rowIdx !== -1) lines[rowIdx] = `| ${date} | ${value} |`;
+  else if (value) {
+    /* keep the table in date order */
+    let at = range.end + 1;
+    for (let i = range.start + 2; i <= range.end; i++) {
+      if ((lines[i].split("|")[1] || "").trim() > date) { at = i; break; }
+    }
+    lines.splice(at, 0, `| ${date} | ${value} |`);
+  } else if (rowIdx !== -1) lines.splice(rowIdx, 1);
+  applyGymChange(lines.join("\n"));
+}
+
+function setGymDays(days) {
+  const lines = ensureWeekPlan(gymText().split("\n"));
+  const text = `**Gym days:** ${[...days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((i) => DOW_SHORT[i]).join(", ")}`;
+  const h = lines.findIndex((l) => /^##\s+week plan/i.test(l.trim()));
+  let found = -1;
+  for (let i = h + 1; i < lines.length && !/^#+\s/.test(lines[i].trim()); i++) {
+    if (/^\*\*Gym days:\*\*/.test(lines[i].trim())) { found = i; break; }
+  }
+  if (found !== -1) lines[found] = text;
+  else lines.splice(h + 1, 0, "", text);
+  applyGymChange(lines.join("\n"));
+}
+
 /* ---------- shared render helpers ---------- */
 
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -2447,8 +2575,10 @@ function renderIndrive(m) {
 function renderGym(m) {
   const g = m.gym || { bodyweights: [], sessions: [], lastBodyweight: null };
   const rot = gymRotation(m);
-  const shown = rot.doneToday || rot.next;
+  const { nextGym } = gymPlanToday(m);
+  const shown = rot.doneToday || (nextGym ? nextGym.w : rot.next);
   const info = GYM_INFO[shown];
+  const nextW = nextGym ? nextGym.w : rot.next;
 
   /* weight-loss goal progress (100kg → 85kg), driven by the Bodyweight log
      that's already tracked here — no separate goal-entry UI needed */
@@ -2459,10 +2589,12 @@ function renderGym(m) {
 
   const heroCard = `
     <div class="hero-fill">
-      <div class="hf-kicker">${rot.doneToday ? `Done today · Workout ${shown}` : `Next up · Workout ${shown}`}</div>
+      <div class="hf-kicker">${rot.doneToday ? `Done today · Workout ${shown}`
+        : nextGym && nextGym.today ? `Today · Workout ${shown}`
+        : `Next up · Workout ${shown}${nextGym ? ` · ${nextGym.dow}` : ""}`}</div>
       <div class="display gym-title">${esc(info.title)}</div>
       <div class="gym-sub">${rot.doneToday
-        ? `Next: Workout ${rot.next} — ${esc(GYM_INFO[rot.next].title)}`
+        ? `Next: ${nextGym ? `${nextGym.dow} · ` : ""}Workout ${nextW} — ${esc(GYM_INFO[nextW].title)}`
         : `${esc(GYM_SESSION)} · ${GYM_WORKOUTS[shown].length} exercises · warm-up ${esc(info.warmup)}`}</div>
       <div class="hf-rule gym-goal"><b>${GYM_GOAL.startKg} kg → ${GYM_GOAL.targetKg} kg</b><span>${lostKg > 0 ? `${lostKg} kg lost` : "no weigh-in yet"}</span></div>
       <div class="hf-bar gym"><div style="width:${goalPct}%"></div></div>
@@ -2470,18 +2602,39 @@ function renderGym(m) {
       <button class="btn on-fill" id="btn-gym-plan">View full plan${icon("ext", 16)}</button>
     </div>`;
 
-  /* A → B → C rotation; the next session is highlighted */
-  const rotationCard = `
+  /* the planned week: suggestions from the rotation, days you pinned, what you logged */
+  const wk = weekSchedule(m, state.gymWeek || 0);
+  const short = { A: "Push", B: "Pull", C: "Legs" };
+  const dayLabel = (x) => x.kind === "done" ? "Done" : x.kind === "gym" ? short[x.w]
+    : x.kind === "football" ? "Match" : x.kind === "skipped" ? "Skipped" : "Rest";
+  const dayInner = (x) => x.kind === "done" && !GYM_ROTATION.includes(x.w) ? icon("check", 18, 3)
+    : x.kind === "done" || x.kind === "gym" ? `<b>${x.w}</b>`
+    : x.kind === "football" ? icon("ball", 18) : x.kind === "skipped" ? "—" : icon("moon", 16);
+  const todayX = wk.offset === 0 ? wk.days.find((x) => x.today) : null;
+  const nextLine = nextGym && !nextGym.today ? ` · next: ${nextGym.dow} · ${nextGym.w} ${esc(GYM_INFO[nextGym.w].title)}` : "";
+  const nGym = wk.days.filter((x) => x.kind === "gym" || x.kind === "done").length;
+  const summary = !todayX ? `${nGym} gym session${nGym === 1 ? "" : "s"} planned`
+    : todayX.kind === "done" ? `Today: Workout ${todayX.w} done${nextLine}`
+    : todayX.kind === "gym" ? `Today: Workout ${todayX.w} — ${esc(GYM_INFO[todayX.w].title)}`
+    : `Today: ${todayX.kind === "football" ? "football" : "rest"}${nextLine}`;
+  const weekCard = `
     <div class="card">
-      <h2>Rotation <span class="h-hint">A → B → C → A …</span></h2>
-      <div class="gw-rot">
-        ${GYM_ROTATION.map((w) => `
-          <div class="gw-day ${w === rot.next ? "today" : ""}${w === rot.doneToday ? " done" : ""}">
-            <span class="gw-dot">${w === rot.doneToday ? icon("check", 20, 3) : `<b>${w}</b>`}</span>
-            <span>${esc(GYM_INFO[w].title)}</span>
-          </div>`).join("")}
+      <h2>Week plan
+        <span class="wk-toggle"><button data-wk="0" class="${wk.offset === 0 ? "active" : ""}">This week</button><button data-wk="1" class="${wk.offset === 1 ? "active" : ""}">Next</button></span></h2>
+      <div class="wk-strip">
+        ${wk.days.map((x) => `
+          <button class="wk-day ${x.kind}${x.today ? " today" : ""}${x.pinned ? " pinned" : ""}${x.warn || x.moved ? " warn" : ""}"
+            data-plan-day="${x.date}" ${x.past ? "disabled" : ""} aria-label="${esc(`${x.dow} ${x.d.getDate()}: ${dayLabel(x)}`)}">
+            <span class="wk-dow">${x.dow} ${x.d.getDate()}</span>
+            <span class="wk-tile">${dayInner(x)}</span>
+            <span class="wk-label">${dayLabel(x)}</span>
+          </button>`).join("")}
       </div>
-      <p class="card-note gw-note">${esc(GYM_TIPS.football)}</p>
+      <p class="wk-summary">${summary}</p>
+      ${wk.notes.map((n) => `<p class="wk-note">${esc(n)}</p>`).join("")}
+      <div class="split wk-foot"><span>Gym days: ${wk.gymDays.length ? [...wk.gymDays].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((i) => DOW_SHORT[i]).join(" · ") : "none"}</span>
+        <button class="link-btn" id="btn-gym-days">Change</button></div>
+      <p class="card-note gw-note">Tap a day to set A, B, C, rest or football. ${esc(GYM_TIPS.football)}</p>
     </div>`;
 
   const bwCard = `
@@ -2532,7 +2685,7 @@ function renderGym(m) {
   /* the session to do (or done) first, then the rest of the rotation in order */
   const i0 = GYM_ROTATION.indexOf(shown);
   const order = [0, 1, 2].map((k) => GYM_ROTATION[(i0 + k) % 3]);
-  return heroCard + rotationCard + healthCard() + workoutRef(order[0]) + sessionsCard + bwCard
+  return heroCard + weekCard + healthCard() + workoutRef(order[0]) + sessionsCard + bwCard
     + workoutRef(order[1]) + workoutRef(order[2]) + tipsCard;
 }
 
@@ -3236,6 +3389,10 @@ function render() {
     document.querySelectorAll("[data-bw-edit]").forEach((el) => {
       el.onclick = () => openBwSheet(el.dataset.bwEdit);
     });
+    document.querySelectorAll("[data-plan-day]").forEach((b) => { b.onclick = () => openPlanDay(b.dataset.planDay); });
+    document.querySelectorAll("[data-wk]").forEach((b) => { b.onclick = () => { state.gymWeek = Number(b.dataset.wk); render(); }; });
+    const gd = $("#btn-gym-days");
+    if (gd) gd.onclick = openGymDays;
     const planOpen = $("#btn-gym-plan");
     if (planOpen) planOpen.onclick = openPlanImage;
     const hs = $("#btn-health-sync");
@@ -3458,8 +3615,10 @@ function openGymSheet(editKey) {
   state.gymEditKey = editKey || null;
   const editing = !!editKey;
   /* a new session defaults to the next workout in the rotation (or the one already logged today) */
-  const rot = gymRotation(buildModel());
-  let date = todayIso(), letter = rot.doneToday || rot.next, prefill = null;
+  const model = buildModel();
+  const rot = gymRotation(model);
+  const planned = gymPlanToday(model).today;
+  let date = todayIso(), letter = rot.doneToday || (planned && planned.kind === "gym" ? planned.w : rot.next), prefill = null;
   if (editing) {
     const [d, w] = editKey.split("|");
     date = d; letter = w;
@@ -3530,6 +3689,59 @@ function closePlanImage() {
   $("#plan-lightbox").classList.add("hidden");
 }
 
+/* ---------- week plan: pick a day's session, and the usual gym days ---------- */
+
+function openPlanDay(date) {
+  if (state.busy) return;
+  const m = buildModel();
+  const all = [...weekSchedule(m, 0).days, ...weekSchedule(m, 1).days];
+  const x = all.find((d) => d.date === date);
+  if (!x || x.past) return;
+  const pin = ((m.gym && m.gym.weekPlan) || {})[date] || null;
+  /* what the planner would put here without a pin: clear the pin and recompute */
+  const unpinned = { ...m, gym: { ...m.gym, weekPlan: { ...((m.gym && m.gym.weekPlan) || {}) } } };
+  delete unpinned.gym.weekPlan[date];
+  const sug = [...weekSchedule(unpinned, 0).days, ...weekSchedule(unpinned, 1).days].find((d) => d.date === date);
+  const sugText = sug.kind === "gym" ? `${sug.w} · ${GYM_INFO[sug.w].title}` : sug.kind === "football" ? "Football" : "Rest";
+  const plan = (m.gym && m.gym.weekPlan) || {};
+  const addDays = (n) => { const d = new Date(`${date}T00:00:00`); d.setDate(d.getDate() + n); return isoOf(d); };
+  const before = plan[addDays(1)] === "Football", afterMatch = plan[addDays(-1)] === "Football";
+  $("#plan-day-title").textContent = x.d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const warn = $("#plan-day-warn");
+  warn.textContent = before ? "Football the next day — the plan says A or B here, not C."
+    : afterMatch ? "Football the day before — the plan says A or B here, not C." : "";
+  warn.classList.toggle("hidden", !before && !afterMatch);
+  const opt = (val, title, sub, ic) => `<button type="button" class="plan-opt${(pin || "auto") === val ? " active" : ""}" data-plan-set="${val}">
+      <span class="po-ic">${ic}</span><span class="po-main"><b>${title}</b><span>${sub}</span></span></button>`;
+  $("#plan-day-opts").innerHTML =
+    opt("auto", "Suggested", esc(sugText), icon("refresh", 18))
+    + GYM_ROTATION.map((w) => opt(w, `${w} · ${esc(GYM_INFO[w].title)}`, w === "C" && (before || afterMatch) ? "Not advised next to football" : esc(GYM_INFO[w].focus.split(" — ")[0]), `<b>${w}</b>`)).join("")
+    + opt("Rest", "Rest", "No gym this day", icon("moon", 18))
+    + opt("Football", "Football", "Match or training — C stays away from it", icon("ball", 18));
+  $("#plan-day-opts").onclick = (e) => {
+    const b = e.target.closest("[data-plan-set]");
+    if (!b) return;
+    closePlanDay();
+    setWeekPlan(date, b.dataset.planSet === "auto" ? null : b.dataset.planSet);
+  };
+  $("#plan-day-sheet").classList.remove("hidden");
+}
+function closePlanDay() { $("#plan-day-sheet").classList.add("hidden"); }
+
+function openGymDays() {
+  if (state.busy) return;
+  const m = buildModel();
+  const sel = new Set((m.gym && m.gym.gymDays) || GYM_DEFAULT_DAYS);
+  const box = $("#gym-days-chips");
+  box.innerHTML = [1, 2, 3, 4, 5, 6, 0].map((i) => `<button type="button" class="fchip${sel.has(i) ? " active" : ""}" data-gd="${i}">${DOW_SHORT[i]}</button>`).join("");
+  box.onclick = (e) => {
+    const b = e.target.closest("[data-gd]");
+    if (b) b.classList.toggle("active");
+  };
+  $("#gym-days-sheet").classList.remove("hidden");
+}
+function closeGymDays() { $("#gym-days-sheet").classList.add("hidden"); }
+
 /* ---------- bodyweight sheet ---------- */
 
 function openBwSheet(editDate) {
@@ -3572,6 +3784,8 @@ function goToTab(view) {
   closeHowTo();
   closeBwSheet();
   closePlanImage();
+  closePlanDay();
+  closeGymDays();
   closeConfirm(false);
   showBars();
   render();
@@ -3704,6 +3918,15 @@ $("#btn-howto-close").onclick = closeHowTo;
 
 $("#plan-lightbox").onclick = closePlanImage;
 
+$("#plan-day-sheet").onclick = (e) => { if (e.target.id === "plan-day-sheet") closePlanDay(); };
+$("#plan-day-cancel").onclick = closePlanDay;
+$("#gym-days-sheet").onclick = (e) => { if (e.target.id === "gym-days-sheet") closeGymDays(); };
+$("#gym-days-cancel").onclick = closeGymDays;
+$("#gym-days-save").onclick = () => {
+  const days = [...document.querySelectorAll("#gym-days-chips .active")].map((b) => Number(b.dataset.gd));
+  closeGymDays();
+  setGymDays(days);
+};
 $("#confirm-sheet").onclick = (e) => { if (e.target.id === "confirm-sheet") closeConfirm(false); };
 $("#confirm-cancel").onclick = () => closeConfirm(false);
 $("#confirm-ok").onclick = () => closeConfirm(true);
@@ -3770,7 +3993,8 @@ window.kernelBack = function () {
   const open = (id) => !$(id).classList.contains("hidden");
   const sheets = [["#confirm-sheet", () => closeConfirm(false)], ["#plan-lightbox", closePlanImage],
     ["#howto-sheet", closeHowTo], ["#composer", closeComposer], ["#habit-modal", closeHabitModal],
-    ["#indrive-sheet", closeIndriveSheet], ["#gym-sheet", closeGymSheet], ["#bw-sheet", closeBwSheet]];
+    ["#indrive-sheet", closeIndriveSheet], ["#gym-sheet", closeGymSheet], ["#bw-sheet", closeBwSheet],
+    ["#plan-day-sheet", closePlanDay], ["#gym-days-sheet", closeGymDays]];
   for (const [id, close] of sheets) if (open(id)) { close(); return true; }
   if (!getToken()) return false;
   if (state.openClient) { state.openClient = null; render(); return true; }

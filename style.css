@@ -588,14 +588,50 @@ input[readonly] { color: var(--mu); }
 .gw-day { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 10px; font-weight: 800; color: var(--mu); }
 .gw-dot { width: 100%; aspect-ratio: 1; border-radius: 14px; border: 2px solid var(--ru); display: grid; place-items: center; color: var(--tx); }
 .gw-day.today { color: var(--at); }
-/* A → B → C rotation tiles */
-.gw-rot { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; }
-.gw-rot .gw-day { font-size: 11px; }
-.gw-rot .gw-dot { aspect-ratio: auto; height: 56px; }
-.gw-dot b { font-family: var(--font-display); font-size: 24px; font-weight: 800; }
-.gw-day.done { color: var(--ok); }
-.gw-day.done .gw-dot { border-color: var(--ok); color: var(--ok); }
-.gw-note { margin: 12px 0 0; }
+/* week plan strip */
+.wk-toggle { display: inline-flex; border: 1.5px solid var(--ru); border-radius: 999px; overflow: hidden; }
+.wk-toggle button { min-height: 28px; padding: 0 10px; border: none; background: none; font-size: 11px; font-weight: 800; letter-spacing: 0; text-transform: none; color: var(--mu); }
+.wk-toggle button.active { background: var(--tx); color: var(--bg); }
+.wk-strip { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 10px; }
+.wk-day { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; padding: 0; background: none; border: none; color: var(--mu); }
+.wk-dow { font-size: 10px; font-weight: 700; white-space: nowrap; }
+.wk-tile {
+  position: relative; width: 100%; aspect-ratio: 1; border-radius: 12px;
+  display: grid; place-items: center; border: 2px solid var(--ru); color: var(--tx);
+}
+.wk-tile b { font-family: var(--font-display); font-size: 20px; font-weight: 800; }
+.wk-label { font-size: 10px; font-weight: 800; white-space: nowrap; }
+.wk-day.rest .wk-tile, .wk-day.skipped .wk-tile { border-color: var(--hr); color: var(--mu); }
+.wk-day.football .wk-tile { border-style: dashed; }
+.wk-day.done .wk-tile { border-color: var(--ok); color: var(--ok); }
+.wk-day.done .wk-label { color: var(--ok); }
+.wk-day.today .wk-dow { color: var(--at); }
+.wk-day.today.gym .wk-tile { background: var(--a); border-color: var(--a); color: var(--ao); }
+.wk-day.today:not(.gym):not(.done) .wk-tile { border-color: var(--a); }
+.wk-day.pinned .wk-tile::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--at); }
+.wk-day.today.gym.pinned .wk-tile::after { background: var(--ao); }
+.wk-day.warn .wk-tile { border-color: var(--wn); }
+.wk-day.warn .wk-label { color: var(--wn); }
+.wk-day[disabled] { opacity: 0.6; }
+.wk-summary { font-size: 13px; font-weight: 700; margin-top: 12px; }
+.wk-note { font-size: 12px; color: var(--wn); margin-top: 4px; }
+.wk-foot { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hr); font-size: 12px; color: var(--mu); }
+.gw-note { margin: 8px 0 0; }
+
+/* plan-a-day popup + gym days */
+.plan-opts { display: flex; flex-direction: column; gap: 6px; }
+.plan-opt {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 6px 12px; text-align: left;
+  background: var(--sf); border: 1.5px solid transparent; border-radius: 14px; color: var(--tx);
+}
+.plan-opt.active { border-color: var(--a); background: color-mix(in srgb, var(--a) 12%, var(--sf)); }
+.po-ic { width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center; border: 1.5px solid var(--ru); }
+.po-ic b { font-family: var(--font-display); font-size: 16px; font-weight: 800; }
+.plan-opt.active .po-ic { background: var(--a); border-color: var(--a); color: var(--ao); }
+.po-main { display: flex; flex-direction: column; min-width: 0; }
+.po-main b { font-size: 14px; font-weight: 800; }
+.po-main span { font-size: 11px; color: var(--mu); }
+.day-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .gw-day.today .gw-dot { background: var(--a); border-color: var(--a); color: var(--ao); }
 
 .ex-row { min-height: 58px; cursor: pointer; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
