@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "68";
+const WEB_VERSION = "69";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -3031,7 +3031,7 @@ function saveReminders() {
   const out = {};
   REMINDER_ROWS.forEach(([k]) => {
     const on = document.querySelector(`[data-rem-on="${k}"]`), t = document.querySelector(`[data-rem-time="${k}"]`);
-    if (on && t) out[k] = { on: on.checked, time: t.value || "09:00" };
+    if (on && t) out[k] = { on: on.checked, time: t.dataset.value || "09:00" };
   });
   window.KernelNative.setReminders(JSON.stringify(out));
   if (Object.values(out).some((r) => r.on) && !window.KernelNative.notificationsEnabled()) window.KernelNative.requestNotifications();
@@ -3049,7 +3049,7 @@ function remindersCard() {
       const r = cfg[k] || { on: false, time: "09:00" };
       return `<div class="rem-row">
         <div class="rem-main"><b>${title}</b><span>${sub}</span></div>
-        <input type="time" class="rem-time" data-rem-time="${k}" value="${esc(r.time)}" aria-label="${title} reminder time">
+        <button type="button" class="rem-time" data-rem-time="${k}" data-title="${title}" data-value="${esc(r.time)}" aria-label="${title} reminder time, ${esc(r.time)}">${esc(r.time)}</button>
         <label class="switch"><input type="checkbox" data-rem-on="${k}" ${r.on ? "checked" : ""} aria-label="${title} reminder"><span></span></label>
       </div>`;
     }).join("")}
@@ -3428,7 +3428,11 @@ function render() {
   if (v === "settings") {
     $("#btn-settings-back").onclick = () => goToTab(state.settingsFrom || "today");
     $("#btn-open-indrive").onclick = () => goToTab("indrive");
-    document.querySelectorAll("[data-rem-on],[data-rem-time]").forEach((el) => { el.onchange = () => { saveReminders(); render(); }; });
+    document.querySelectorAll("[data-rem-on]").forEach((el) => { el.onchange = () => { saveReminders(); render(); }; });
+    /* the WebView's native time picker doesn't open reliably, so reminder times use Kernel's own picker */
+    document.querySelectorAll("[data-rem-time]").forEach((b) => {
+      b.onclick = () => openTimePicker(b.dataset.title, b.dataset.value, (v) => { b.dataset.value = v; saveReminders(); render(); });
+    });
     const remTest = $("#btn-rem-test");
     if (remTest) remTest.onclick = () => { if (!window.KernelNative.notificationsEnabled()) window.KernelNative.requestNotifications(); window.KernelNative.testNotification(); };
     $("#btn-open-clients").onclick = () => goToTab("clients");
@@ -3689,6 +3693,27 @@ function closePlanImage() {
   $("#plan-lightbox").classList.add("hidden");
 }
 
+/* ---------- time picker (reminder times) ---------- */
+
+let _timeDone = null;
+function openTimePicker(title, value, onSave) {
+  const [h0, m0] = String(value || "09:00").split(":").map((n) => parseInt(n, 10) || 0);
+  let h = h0, mi = m0;
+  const mins = [...new Set([...Array.from({ length: 12 }, (_, i) => i * 5), m0])].sort((a, b) => a - b);
+  const draw = () => {
+    $("#time-now").textContent = `${pad2(h)}:${pad2(mi)}`;
+    $("#time-hours").innerHTML = Array.from({ length: 24 }, (_, i) => `<button type="button" class="tchip${i === h ? " active" : ""}" data-h="${i}">${pad2(i)}</button>`).join("");
+    $("#time-mins").innerHTML = mins.map((x) => `<button type="button" class="tchip${x === mi ? " active" : ""}" data-mi="${x}">${pad2(x)}</button>`).join("");
+  };
+  $("#time-title").textContent = `${title} reminder`;
+  $("#time-hours").onclick = (e) => { const b = e.target.closest("[data-h]"); if (b) { h = Number(b.dataset.h); draw(); } };
+  $("#time-mins").onclick = (e) => { const b = e.target.closest("[data-mi]"); if (b) { mi = Number(b.dataset.mi); draw(); } };
+  _timeDone = () => onSave(`${pad2(h)}:${pad2(mi)}`);
+  draw();
+  $("#time-sheet").classList.remove("hidden");
+}
+function closeTimePicker() { $("#time-sheet").classList.add("hidden"); _timeDone = null; }
+
 /* ---------- week plan: pick a day's session, and the usual gym days ---------- */
 
 function openPlanDay(date) {
@@ -3786,6 +3811,7 @@ function goToTab(view) {
   closePlanImage();
   closePlanDay();
   closeGymDays();
+  closeTimePicker();
   closeConfirm(false);
   showBars();
   render();
@@ -3918,6 +3944,9 @@ $("#btn-howto-close").onclick = closeHowTo;
 
 $("#plan-lightbox").onclick = closePlanImage;
 
+$("#time-sheet").onclick = (e) => { if (e.target.id === "time-sheet") closeTimePicker(); };
+$("#time-cancel").onclick = closeTimePicker;
+$("#time-save").onclick = () => { const done = _timeDone; closeTimePicker(); if (done) done(); };
 $("#plan-day-sheet").onclick = (e) => { if (e.target.id === "plan-day-sheet") closePlanDay(); };
 $("#plan-day-cancel").onclick = closePlanDay;
 $("#gym-days-sheet").onclick = (e) => { if (e.target.id === "gym-days-sheet") closeGymDays(); };
@@ -3994,7 +4023,7 @@ window.kernelBack = function () {
   const sheets = [["#confirm-sheet", () => closeConfirm(false)], ["#plan-lightbox", closePlanImage],
     ["#howto-sheet", closeHowTo], ["#composer", closeComposer], ["#habit-modal", closeHabitModal],
     ["#indrive-sheet", closeIndriveSheet], ["#gym-sheet", closeGymSheet], ["#bw-sheet", closeBwSheet],
-    ["#plan-day-sheet", closePlanDay], ["#gym-days-sheet", closeGymDays]];
+    ["#plan-day-sheet", closePlanDay], ["#gym-days-sheet", closeGymDays], ["#time-sheet", closeTimePicker]];
   for (const [id, close] of sheets) if (open(id)) { close(); return true; }
   if (!getToken()) return false;
   if (state.openClient) { state.openClient = null; render(); return true; }

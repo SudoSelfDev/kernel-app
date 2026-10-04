@@ -20,7 +20,7 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preload" href="fonts/dm-sans-var.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="preload" href="fonts/bricolage-grotesque-var.ttf" as="font" type="font/ttf" crossorigin>
-  <link rel="stylesheet" href="style.css?v=68">
+  <link rel="stylesheet" href="style.css?v=69">
 </head>
 <body data-acc="today">
   <header id="topbar">
@@ -124,6 +124,20 @@
     </div>
   </div>
 
+  <div id="time-sheet" class="sheet-backdrop center hidden" data-acc="neutral">
+    <div class="sheet">
+      <div class="sheet-kicker">Settings</div>
+      <h3 class="sheet-title" id="time-title">Reminder</h3>
+      <div class="time-now display" id="time-now">09:00</div>
+      <div><span class="flabel">Hour</span><div class="time-grid" id="time-hours"></div></div>
+      <div><span class="flabel">Minute</span><div class="time-grid" id="time-mins"></div></div>
+      <div class="btn-row">
+        <button class="btn secondary" id="time-cancel">Cancel</button>
+        <button class="btn" id="time-save">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div id="plan-day-sheet" class="sheet-backdrop center hidden" data-acc="gym">
     <div class="sheet">
       <div class="sheet-kicker">Week plan</div>
@@ -179,6 +193,6 @@
     <button data-view="articles" data-icon="book" data-acc="read" class="tab"><span class="ticon"></span>Library</button>
   </nav>
 
-  <script src="app.js?v=68"></script>
+  <script src="app.js?v=69"></script>
 </body>
 </html>

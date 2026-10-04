@@ -821,12 +821,20 @@ input[readonly] { color: var(--mu); }
 .rem-main { flex: 1; min-width: 0; }
 .rem-main b { display: block; font-size: 14px; font-weight: 800; }
 .rem-main span { font-size: 11px; color: var(--mu); }
-.card input.rem-time {
-  width: auto; min-height: 34px; padding: 0 10px; flex-shrink: 0;
-  background: transparent; border: 1px solid var(--ru); border-radius: 10px;
-  font-size: 13px; font-weight: 800;
+.rem-time {
+  min-height: 36px; padding: 0 12px; flex-shrink: 0;
+  background: transparent; color: var(--tx); border: 1px solid var(--ru); border-radius: 10px;
+  font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums;
 }
-.card input.rem-time::-webkit-calendar-picker-indicator { display: none; }
+.rem-time:active { background: var(--hr); }
+/* time picker popup */
+.time-now { font-size: 56px; letter-spacing: -0.03em; text-align: center; font-variant-numeric: tabular-nums; }
+.time-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.tchip {
+  min-height: 40px; border-radius: 12px; border: 1.5px solid var(--ru); background: none; color: var(--tx);
+  font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+.tchip.active { background: var(--a); border-color: var(--a); color: var(--ao); }
 .card .seg { margin-top: 10px; }
 .nav-card { padding: 0 16px; }
 .nav-row {
