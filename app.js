@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "71";
+const WEB_VERSION = "72";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -135,19 +135,19 @@ const TAB_ORDER = ["today", "habits", "money", "gym", "articles"];
    (assets/exercises/) is its step-by-step picture, shown in the hold-for-how-to popup. */
 const GYM_WORKOUTS = {
   A: [
-    { name: "Dumbbell Bench Press", target: "3 × 10",
+    { name: "Dumbbell Bench Press", img: "assets/exercises/a1.webp", target: "3 × 10",
       cues: ["Keep feet flat, back on bench", "Lower to chest, press up", "Control the movement"] },
-    { name: "Incline Dumbbell Press", target: "3 × 12",
+    { name: "Incline Dumbbell Press", img: "assets/exercises/a2.webp", target: "3 × 12",
       cues: ["Bench at 30–45°", "Lower to upper chest", "Press up, don't lock elbows"] },
-    { name: "Dumbbell Shoulder Press", target: "3 × 12",
+    { name: "Dumbbell Shoulder Press", img: "assets/exercises/a3.webp", target: "3 × 12",
       cues: ["Keep core tight", "Press overhead", "Don't arch your back"] },
-    { name: "Cable Lateral Raise", target: "3 × 15",
+    { name: "Cable Lateral Raise", img: "assets/exercises/a4.webp", target: "3 × 15",
       cues: ["Slight bend in elbows", "Raise to shoulder height", "Control on the way down"] },
-    { name: "Triceps Pushdown (Cable)", target: "3 × 12",
+    { name: "Triceps Pushdown (Cable)", img: "assets/exercises/a5.webp", target: "3 × 12",
       cues: ["Keep elbows close to body", "Push down fully", "Control the return"] },
-    { name: "Overhead Triceps Extension", target: "2 × 15",
+    { name: "Overhead Triceps Extension", img: "assets/exercises/a6.webp", target: "2 × 15",
       cues: ["Keep elbows in", "Lower behind head", "Extend fully, control"] },
-    { name: "Plank", target: "3 × 30 sec", isTimed: true,
+    { name: "Plank", img: "assets/exercises/a7.webp", target: "3 × 30 sec", isTimed: true,
       cues: ["Keep body in a straight line", "Engage core, glutes and legs", "Don't let hips sag"] },
   ],
   B: [
