@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "69";
+const WEB_VERSION = "70";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -131,7 +131,8 @@ const TAB_ORDER = ["today", "habits", "money", "gym", "articles"];
    fixed weekdays: A → B → C → A … ; the next one is whatever follows the last
    logged A/B/C session. Hardcoded (not vault-parsed) so the logging form always
    matches the plan; if the plan changes, update this and the plan image together.
-   Replaced the Upper Body / Legs Day weekday plan 2026-10-03. */
+   Replaced the Upper Body / Legs Day weekday plan 2026-10-03. An exercise's `img`
+   (assets/exercises/) is its step-by-step picture, shown in the hold-for-how-to popup. */
 const GYM_WORKOUTS = {
   A: [
     { name: "Dumbbell Bench Press", target: "3 × 10",
@@ -166,20 +167,20 @@ const GYM_WORKOUTS = {
       cues: ["Full arm extension", "Relax shoulders", "Hold as long as possible"] },
   ],
   C: [
-    { name: "Leg Press", target: "3 × 12",
+    { name: "Leg Press", img: "assets/exercises/c1.webp", target: "3 × 12",
       cues: ["Feet shoulder-width", "Lower with control, press up", "Don't lock your knees"] },
-    { name: "Romanian Deadlift", target: "3 × 10",
+    { name: "Romanian Deadlift", img: "assets/exercises/c2.webp", target: "3 × 10",
       cues: ["Slight bend in knees", "Hinge at hips, keep back straight", "Feel the stretch in hamstrings"] },
-    { name: "Leg Extension", target: "3 × 15",
+    { name: "Leg Extension", img: "assets/exercises/c3.webp", target: "3 × 15",
       cues: ["Control the movement", "Full knee extension", "Don't swing your legs"] },
-    { name: "Seated Leg Curl", target: "3 × 12",
+    { name: "Seated Leg Curl", img: "assets/exercises/c4.webp", target: "3 × 12",
       cues: ["Keep hips on the seat", "Curl fully, control the return", "Feel the hamstrings"] },
-    { name: "Calf Raises", target: "3 × 20",
+    { name: "Calf Raises", img: "assets/exercises/c5.webp", target: "3 × 20",
       cues: ["Full range of motion", "Pause at the top", "Keep balance, control"] },
-    { name: "Hanging Knee Raise", alt: "Ab Wheel Rollout", target: "3 × 10",
+    { name: "Hanging Knee Raise", img: "assets/exercises/c6.webp", alt: "Ab Wheel Rollout", target: "3 × 10",
       cues: ["Hang from a bar", "Raise knees to chest", "Avoid swinging"],
       altCues: ["Keep core tight", "Roll forward, don't arch your back", "Control the way back"] },
-    { name: "Incline Walk Finisher", target: "5 min", isTimed: true,
+    { name: "Incline Walk Finisher", img: "assets/exercises/c7.webp", target: "5 min", isTimed: true,
       cues: ["Incline 6–10%", "Moderate pace", "5 minutes"] },
   ],
 };
@@ -3651,7 +3652,12 @@ function openHowTo(letter, i) {
   const e = GYM_WORKOUTS[letter] && GYM_WORKOUTS[letter][i];
   if (!e) return;
   $("#howto-num").textContent = pad2(i + 1);
+  $("#howto-num").classList.toggle("hidden", !!e.img);   // the picture already carries the number
   $("#howto-title").textContent = e.name;
+  const pic = $("#howto-img");
+  pic.classList.toggle("hidden", !e.img);
+  if (e.img) { pic.src = e.img; pic.alt = `${e.name}: step-by-step form`; }
+  else pic.removeAttribute("src");
   const rows = (cues) => cues.map((t, n) => `<div><b>${n + 1}</b><span>${esc(t)}</span></div>`).join("");
   $("#howto-body").innerHTML = rows(e.cues || ["No form notes for this one yet."])
     + (e.alt && e.altCues ? `<div class="howto-alt"><span>Or: ${esc(e.alt)}</span></div>${rows(e.altCues)}` : "");
@@ -3659,6 +3665,7 @@ function openHowTo(letter, i) {
 }
 function closeHowTo() {
   $("#howto-sheet").classList.add("hidden");
+  $("#howto-sheet").classList.remove("zoom");
 }
 
 /* ---------- plan lightbox — the A/B/C rotation drawn from GYM_WORKOUTS, tap anywhere to close ---------- */
@@ -3941,6 +3948,8 @@ $("#btn-gym-remove").onclick = async () => {
 
 $("#howto-sheet").onclick = (e) => { if (e.target.id === "howto-sheet") closeHowTo(); };
 $("#btn-howto-close").onclick = closeHowTo;
+/* tap the picture to see it full screen; tap again to go back */
+$("#howto-img").onclick = () => $("#howto-sheet").classList.toggle("zoom");
 
 $("#plan-lightbox").onclick = closePlanImage;
 
