@@ -929,6 +929,7 @@ input[readonly] { color: var(--mu); }
 .howto-steps b { color: var(--at); flex-shrink: 0; width: 12px; }
 /* exercise picture in the how-to popup; tap = full screen */
 .howto-img { display: block; width: 100%; height: auto; border-radius: 18px; background: var(--sf); cursor: zoom-in; }
+.ref-overview { margin: -4px 0 2px; }
 #howto-sheet.zoom { padding: 0; }
 #howto-sheet.zoom .sheet { width: 100%; max-height: 100%; border-radius: 0; padding: calc(var(--safe-t) + 8px) 8px 8px; gap: 8px; box-shadow: none; border: none; }
 #howto-sheet.zoom .sheet > :not(.howto-img) { display: none; }

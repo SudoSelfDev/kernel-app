@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "70";
+const WEB_VERSION = "71";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -151,17 +151,17 @@ const GYM_WORKOUTS = {
       cues: ["Keep body in a straight line", "Engage core, glutes and legs", "Don't let hips sag"] },
   ],
   B: [
-    { name: "Lat Pulldown", target: "3 × 10",
+    { name: "Lat Pulldown", img: "assets/exercises/b1.webp", target: "3 × 10",
       cues: ["Grasp bar wide", "Pull to upper chest", "Squeeze your back"] },
-    { name: "Seated Cable Row", target: "3 × 12",
+    { name: "Seated Cable Row", img: "assets/exercises/b2.webp", target: "3 × 12",
       cues: ["Keep back straight", "Pull to your midsection", "Squeeze shoulder blades"] },
-    { name: "Chest-Supported DB Row", target: "3 × 12",
+    { name: "Chest-Supported DB Row", img: "assets/exercises/b3.webp", target: "3 × 12",
       cues: ["Chest on bench", "Pull towards hips", "Squeeze your back"] },
-    { name: "Face Pull (Cable)", target: "3 × 15",
+    { name: "Face Pull (Cable)", img: "assets/exercises/b4.webp", target: "3 × 15",
       cues: ["Use rope, pull to face", "Keep elbows high", "Squeeze rear delts"] },
-    { name: "EZ Bar Curl", target: "3 × 12",
+    { name: "EZ Bar Curl", img: "assets/exercises/b5.webp", target: "3 × 12",
       cues: ["Keep elbows at your sides", "Full range of motion", "Control the weight"] },
-    { name: "Hammer Curl", target: "3 × 12",
+    { name: "Hammer Curl", img: "assets/exercises/b6.webp", target: "3 × 12",
       cues: ["Neutral grip (palms in)", "Keep elbows still", "Control the movement"] },
     { name: "Dead Hang", target: "2 × 20–30 sec", isTimed: true,
       cues: ["Full arm extension", "Relax shoulders", "Hold as long as possible"] },
@@ -181,13 +181,14 @@ const GYM_WORKOUTS = {
       cues: ["Hang from a bar", "Raise knees to chest", "Avoid swinging"],
       altCues: ["Keep core tight", "Roll forward, don't arch your back", "Control the way back"] },
     { name: "Incline Walk Finisher", img: "assets/exercises/c7.webp", target: "5 min", isTimed: true,
-      cues: ["Incline 6–10%", "Moderate pace", "5 minutes"] },
+      cues: ["Incline 10–15%", "Moderate pace", "5 minutes"] },
   ],
 };
 const GYM_ROTATION = ["A", "B", "C"];
 const GYM_INFO = {
   A: { title: "Upper Push", focus: "Chest · Shoulders · Triceps", warmup: "5 min treadmill easy jog", quote: "Stronger today. Leaner tomorrow." },
-  B: { title: "Upper Pull", focus: "Back · Biceps", warmup: "5 min rowing machine or bike", quote: "A stronger back builds a stronger you." },
+  B: { title: "Upper Pull", focus: "Back · Biceps", warmup: "5 min rowing machine or bike", quote: "A stronger back builds a stronger you.",
+    overview: "assets/exercises/b-overview.webp" },
   C: { title: "Legs + Core", focus: "Football-aware — never the day before a match", warmup: "5 min bike", quote: "Legs today. A stronger tomorrow." },
 };
 const GYM_SESSION = "45–60 min @ 6:30 am";
@@ -2666,6 +2667,7 @@ function renderGym(m) {
     <div class="card list">
       <h2 class="acc">${w} · ${esc(GYM_INFO[w].title)} <span class="h-hint">Hold for how-to</span></h2>
       <p class="card-note">${esc(GYM_INFO[w].focus)} · warm-up ${esc(GYM_INFO[w].warmup)}</p>
+      ${GYM_INFO[w].overview ? `<button class="ghost sm ref-overview" data-gym-overview="${w}">${icon("book", 16)}See the whole workout</button>` : ""}
       ${GYM_WORKOUTS[w].map((e, i) => `
         <div class="row ex-row" data-gym-how="${w}:${i}">
           <span class="ex-n">${pad2(i + 1)}</span>
@@ -3390,6 +3392,7 @@ function render() {
     document.querySelectorAll("[data-bw-edit]").forEach((el) => {
       el.onclick = () => openBwSheet(el.dataset.bwEdit);
     });
+    document.querySelectorAll("[data-gym-overview]").forEach((b) => { b.onclick = () => openWorkoutOverview(b.dataset.gymOverview); });
     document.querySelectorAll("[data-plan-day]").forEach((b) => { b.onclick = () => openPlanDay(b.dataset.planDay); });
     document.querySelectorAll("[data-wk]").forEach((b) => { b.onclick = () => { state.gymWeek = Number(b.dataset.wk); render(); }; });
     const gd = $("#btn-gym-days");
@@ -3661,6 +3664,17 @@ function openHowTo(letter, i) {
   const rows = (cues) => cues.map((t, n) => `<div><b>${n + 1}</b><span>${esc(t)}</span></div>`).join("");
   $("#howto-body").innerHTML = rows(e.cues || ["No form notes for this one yet."])
     + (e.alt && e.altCues ? `<div class="howto-alt"><span>Or: ${esc(e.alt)}</span></div>${rows(e.altCues)}` : "");
+  $("#howto-sheet").classList.remove("hidden");
+}
+function openWorkoutOverview(w) {
+  const info = GYM_INFO[w];
+  if (!info || !info.overview) return;
+  $("#howto-num").classList.add("hidden");
+  $("#howto-title").textContent = `Workout ${w} · ${info.title}`;
+  const pic = $("#howto-img");
+  pic.src = info.overview; pic.alt = `Workout ${w}, ${info.title}: every exercise at a glance`;
+  pic.classList.remove("hidden");
+  $("#howto-body").innerHTML = "";
   $("#howto-sheet").classList.remove("hidden");
 }
 function closeHowTo() {
