@@ -8,7 +8,7 @@ The vault stays private; this repo holds **only the static app — zero data**. 
 
 ## Features
 
-- **Today**: a daily task list (add, complete, edit, remove; changes are committed back to the vault), plus a transport-booking card with a quiet link to the booking site.
+- **Today**: a daily task list (add, complete, edit, remove; changes are committed back to the vault), a transport-booking card with a quiet link to the booking site, and progress tiles for study and side income.
 - **Habits**: daily check-offs with a 7-day strip and streak counters. Habits can be added and removed in-app.
 - **Finances**: goal progress with milestones, a monthly tracker and editable debts.
 - **Gym**: an A → B → C workout rotation, a week planner (suggested days you can override), per-exercise logging, a bodyweight log, and press-and-hold exercise pictures.
@@ -31,7 +31,7 @@ This repo (public, static app)  ──▶  GitHub Pages  ──▶  PWA
 
 - **Serverless.** No backend, no database — fetch, parse, render, and write-back all happen in the browser.
 - **Write-back.** Edits are committed to the vault via the Contents API, debounced so rapid changes produce a single commit.
-- **Automation.** Scheduled GitHub Actions in the vault repo keep a calendar feed fresh and send push notifications (via ntfy.sh) — no server required.
+- **Automation.** Scheduled GitHub Actions in the vault repo create each day's note and send push reminders (via ntfy.sh). No server required.
 
 ## Setup
 
@@ -48,4 +48,5 @@ This repo (public, static app)  ──▶  GitHub Pages  ──▶  PWA
 
 - Vanilla JS (ES2020+), no framework, no build step
 - PWA: Web App Manifest + a network-first service worker
+- Every change bumps one version number in three places: `WEB_VERSION` in `app.js`, the `?v=` asset links in `index.html`, and the cache name in `sw.js`
 - Hosted on GitHub Pages
