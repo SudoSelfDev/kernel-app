@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "72";
+const WEB_VERSION = "73";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -17,7 +17,6 @@ const PATHS = {
   clients: atob("MTBfUHJvamVjdHMvRGFyU3RyZWFtL2RhcnN0cmVhbS1jbGllbnRzLm1k"),
   savings: atob("MTBfUHJvamVjdHMvU2F2aW5nc19QbGFuL1NhdmluZ3NfUGxhbi5tZA=="),
   debts: atob("MjBfTGlmZWxvZy9EZWJ0TG9nLm1k"),
-  study: atob("MTBfUHJvamVjdHMvQ2xvdWRfRW5naW5lZXJpbmcvUGhhc2VfMS9waGFzZTEtcHJvZ3Jlc3MubWQ="),
   studyplan: atob("MTBfUHJvamVjdHMvQ2xvdWRfRW5naW5lZXJpbmcvY2xvdWQtc3R1ZHktcGxhbi5tZA=="),
   transport: atob("MjBfTGlmZWxvZy90cmFuc3BvcnQtbG9nLm1k"),
   dailyDir: atob("MjBfTGlmZWxvZy8yMV9EYWlseU5vdGVzLw=="),
@@ -39,7 +38,7 @@ const state = {
   article: null,      // name of the open article, or null for the list
   articleTag: "",     // Read-tab category chip filter ("" = All)
   articleQuery: "",   // Read-tab search filter
-  files: {},          // clients/savings/debts/study/schedule: raw · daily: {text, sha}|null · articles: [{name, text}]
+  files: {},          // clients/savings/debts/studyplan/schedule: raw · daily: {text, sha}|null · articles: [{name, text}]
   lastSync: null,
   error: null,
   busy: false,        // a write is in flight
@@ -565,11 +564,10 @@ async function syncAll() {
   setSyncStatus("Syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, study, studyplan, daily, tree, masterplan, habits, transport, indrive, gym] = await Promise.all([
+    const [clients, savings, debts, studyplan, daily, tree, masterplan, habits, transport, indrive, gym] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
-      fetchRaw(PATHS.study, { optional: true }),
       fetchRaw(PATHS.studyplan, { optional: true }),
       fetchWithSha(todayNotePath(), { optional: true }),
       fetchTree().catch(() => []),
@@ -590,7 +588,7 @@ async function syncAll() {
         articles.push({ name: f.path.split("/").pop(), path: f.path, text });
       }
     });
-    state.files = { clients, savings, debts, study, studyplan, daily, articles, masterplan, habits, transport, indrive, gym };
+    state.files = { clients, savings, debts, studyplan, daily, articles, masterplan, habits, transport, indrive, gym };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -1415,11 +1413,27 @@ function buildModel() {
     });
   }
 
-  if (f.study) {
-    const title = (f.study.match(/^#\s+(.+)$/m) || [])[1] || "Study";
-    const boxes = f.study.match(/^- \[[ xX]\]/gm) || [];
-    const done = f.study.match(/^- \[[xX]\]/gm) || [];
-    m.study = { title: title.replace(/:.*$/, ""), total: boxes.length, done: done.length };
+  /* cloud study progress comes straight from the plan's "done when" checkboxes,
+     so resetting or rewriting cloud-study-plan.md resets the tile with it */
+  if (f.studyplan) {
+    const phases = [];
+    let cur = null;
+    f.studyplan.split("\n").forEach((line) => {
+      const h = line.match(/^###\s+(Phase\s+\d+)\s*:?\s*(.*)$/i);
+      if (h) { cur = { label: h[1], name: h[2].trim(), total: 0, done: 0 }; phases.push(cur); return; }
+      if (/^##\s/.test(line)) { cur = null; return; }
+      const box = cur && line.match(/^\s*- \[([ xX])\]/);
+      if (box) { cur.total++; if (box[1] !== " ") cur.done++; }
+    });
+    const tracked = phases.filter((p) => p.total);
+    if (tracked.length) {
+      const now = tracked.find((p) => p.done < p.total);
+      m.study = {
+        total: tracked.reduce((a, p) => a + p.total, 0),
+        done: tracked.reduce((a, p) => a + p.done, 0),
+        title: now ? `${now.label}${now.name ? `: ${now.name}` : ""} · ${now.done}/${now.total}` : "Plan complete",
+      };
+    }
   }
 
   if (f.transport) {
