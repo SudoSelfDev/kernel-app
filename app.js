@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "76";
+const WEB_VERSION = "77";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -25,6 +25,7 @@ const PATHS = {
   indrive: atob("MTBfUHJvamVjdHMvSW5Ecml2ZS9pbmRyaXZlLWluY29tZS5tZA=="),
   gym: atob("MTBfUHJvamVjdHMvRml0bmVzcy9neW0tbG9nLm1k"),
   notesDir: atob("MjBfTGlmZWxvZy9Ob3Rlcy8="),
+  library: atob("MTBfUHJvamVjdHMvS2VybmVsX0FwcC9saWJyYXJ5Lm1k"),
 };
 
 const LS_TOKEN = "kernel_pat";
@@ -40,7 +41,7 @@ const state = {
   articleTag: "",     // Read-tab category chip filter ("" = All)
   articleQuery: "",   // Read-tab search filter
   libTab: "notes",    // Library segment: "notes" | "articles"
-  libBrowse: "folders", // Articles browse mode: "folders" | "tags"
+  libBrowse: "home",  // Articles view: "home" (your picks) | "folders" | "tags" | "hidden"
   libFolder: "",      // folder open in the Articles browser ("" = vault root)
   tagsAll: false,     // show every tag instead of the most used ones
   articleTrail: [],   // articles opened by following [[links]] — Back walks back through them
@@ -389,6 +390,10 @@ const ICONS = {
   ext: "M15 3h6v6 M10 14 21 3 M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
   trash: "M3 6h18 M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6 M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2",
   folder: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
+  home: "M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8 M3 10a2 2 0 0 1 .71-1.53l7-6a2 2 0 0 1 2.58 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+  bookmark: "m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z",
+  eyeoff: "M10.73 5.08a10.74 10.74 0 0 1 11.2 6.57 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-1.44 2.49 M14.08 14.16a3 3 0 0 1-4.24-4.24 M17.48 17.5a10.75 10.75 0 0 1-15.42-5.15 1 1 0 0 1 0-.7 10.75 10.75 0 0 1 4.45-5.14 M2 2l20 20",
+  eye: "M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0 M9 12a3 3 0 1 0 6 0 3 3 0 1 0-6 0",
   tag: "M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.7 8.7a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42z M7.5 7.5h.01",
   note: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z M14 2v4a2 2 0 0 0 2 2h4 M10 9H8 M16 13H8 M16 17H8",
   pin: "M12 17v5 M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z",
@@ -580,6 +585,7 @@ async function flushAllPending() {
   if (_transportTimer) { clearTimeout(_transportTimer); _transportTimer = null; jobs.push(flushTransport()); }
   if (_indriveTimer) { clearTimeout(_indriveTimer); _indriveTimer = null; jobs.push(flushIndrive()); }
   if (_gymTimer) { clearTimeout(_gymTimer); _gymTimer = null; jobs.push(flushGym()); }
+  if (_libraryTimer) { clearTimeout(_libraryTimer); _libraryTimer = null; jobs.push(flushLibrary()); }
   Object.keys(_noteTimers).forEach((path) => { clearTimeout(_noteTimers[path]); delete _noteTimers[path]; jobs.push(flushNote(path)); });
   await Promise.all(jobs);
 }
@@ -592,7 +598,7 @@ async function syncAll() {
   setSyncStatus("Syncing…");
   state.error = null;
   try {
-    const [clients, savings, debts, studyplan, daily, tree, masterplan, habits, transport, indrive, gym] = await Promise.all([
+    const [clients, savings, debts, studyplan, daily, tree, masterplan, habits, transport, indrive, gym, library] = await Promise.all([
       fetchRaw(PATHS.clients),
       fetchRaw(PATHS.savings),
       fetchRaw(PATHS.debts),
@@ -604,6 +610,7 @@ async function syncAll() {
       fetchRaw(PATHS.transport, { optional: true }),
       fetchRaw(PATHS.indrive, { optional: true }),
       fetchRaw(PATHS.gym, { optional: true }),
+      fetchRaw(PATHS.library, { optional: true }),
     ]);
     /* the Library's Articles are every markdown file in the vault except daily notes and Notes;
        a file whose blob SHA hasn't changed is reused from the cache instead of downloaded again */
@@ -619,7 +626,9 @@ async function syncAll() {
       }))).filter(Boolean);
     }
     const notes = tree ? await syncNotes(tree) : state.files.notes || [];
-    state.files = { clients, savings, debts, studyplan, daily, articles, masterplan, habits, transport, indrive, gym, notes };
+    /* a library change still waiting to save wins over the copy just fetched */
+    state.files = { clients, savings, debts, studyplan, daily, articles, masterplan, habits, transport, indrive, gym, notes,
+      library: _libraryTimer ? state.files.library : library };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -1252,7 +1261,7 @@ function frontmatterTags(md) {
 function isLibraryFile(path) {
   if (!path.endsWith(".md")) return false;
   if (path.split("/").some((seg) => seg.startsWith("."))) return false;
-  return !path.startsWith(PATHS.dailyDir) && !path.startsWith(PATHS.notesDir);
+  return !path.startsWith(PATHS.dailyDir) && !path.startsWith(PATHS.notesDir) && path !== PATHS.library;
 }
 
 /* "10_Projects" → "Projects", "_Daemon" → "Daemon", "Cloud_Engineering" → "Cloud Engineering" */
@@ -2239,6 +2248,63 @@ function setGymDays(days) {
   applyGymChange(lines.join("\n"));
 }
 
+/* ---------- Library settings: the Articles home + hidden files/folders (10_Projects/Kernel_App/library.md) ---------- */
+
+let _libraryTimer = null;
+
+/* { home: [paths], hidden: [paths; a folder ends with "/"], exists } — before the file exists,
+   home starts as the research-tagged files (what Articles showed before v76) */
+function librarySettings(articles) {
+  const text = state.files.library;
+  const list = (heading) => section(text || "", heading).split("\n")
+    .map((l) => l.match(/^\s*[-*]\s+`?([^`]+?)`?\s*$/)).filter(Boolean).map((mm) => mm[1].trim());
+  if (!text) {
+    return { exists: false, hidden: [],
+      home: articles.filter((a) => (a.tags || []).some((t) => t.toLowerCase() === "research")).map((a) => a.path) };
+  }
+  return { exists: true, home: list("## Home"), hidden: list("## Hidden") };
+}
+
+const isHiddenPath = (path, hidden) => hidden.some((h) => (h.endsWith("/") ? path.startsWith(h) : path === h));
+
+function libraryText(home, hidden) {
+  const lines = (arr) => (arr.length ? arr.map((p) => `- ${p}`).join("\n") : "");
+  return `---\ntitle: Kernel Library settings\ntags:\n  - kernel-app\n---\n\n# Kernel Library settings\n\n` +
+    `Written by the Kernel App (Library → Articles). One vault path per line; a folder ends with "/".\n\n` +
+    `## Home\n\nFiles pinned to the Articles home, top first.\n\n${lines(home)}\n\n` +
+    `## Hidden\n\nFiles and folders left out of Articles.\n\n${lines(hidden)}\n`;
+}
+
+/* change the home / hidden lists and queue the save */
+function updateLibrary(fn) {
+  const cur = librarySettings(buildModel().articles);
+  const next = fn({ home: [...cur.home], hidden: [...cur.hidden] });
+  /* anything hidden also leaves the home */
+  next.home = next.home.filter((p, i, arr) => arr.indexOf(p) === i && !isHiddenPath(p, next.hidden));
+  state.files.library = libraryText(next.home, [...new Set(next.hidden)]);
+  render();
+  if (_libraryTimer) clearTimeout(_libraryTimer);
+  _libraryTimer = setTimeout(flushLibrary, SAVE_DELAY);
+}
+
+async function flushLibrary() {
+  _libraryTimer = null;
+  const text = state.files.library;
+  if (!text) return;
+  try {
+    /* the app owns this file: write over whatever is there, using its current blob SHA */
+    const server = await fetchRaw(PATHS.library, { optional: true });
+    await putFile(PATHS.library, text, "kernel-app: update library", server == null ? undefined : await gitBlobSha(server));
+    state.lastSync = Date.now();
+    saveCache();
+    if (state.error && /library/i.test(state.error)) state.error = null;
+  } catch (e) {
+    state.error = e.message === "auth-write" ? "Write rejected — your token needs Contents: Read and write to change the library."
+      : "Couldn't save the library change — check your connection and try again.";
+  }
+  render();
+}
+
 /* ---------- notes (one markdown file per note in 20_Lifelog/Notes/) ---------- */
 
 const _noteTimers = {};   // path → debounce timer
@@ -3203,7 +3269,8 @@ function tagIndex(articles) {
 const hasTag = (a, key) => (a.tags || []).some((t) => t.toLowerCase() === key);
 
 function renderLibraryFiles(m) {
-  const all = m.articles;
+  const lib = librarySettings(m.articles);
+  const all = m.articles.filter((a) => !isHiddenPath(a.path, lib.hidden));
   const q = state.articleQuery.trim().toLowerCase();
   const search = `
     <div class="search-bar">
@@ -3226,9 +3293,43 @@ function renderLibraryFiles(m) {
 
   const modes = `
     <div class="lib-modes">
-      <button class="fchip ${state.libBrowse === "folders" ? "active" : ""}" data-lib-browse="folders">${icon("folder", 15)}Folders</button>
+      <button class="fchip ${state.libBrowse === "home" ? "active" : ""}" data-lib-browse="home">${icon("home", 15)}Home</button>
+      <button class="fchip ${state.libBrowse === "folders" || state.libBrowse === "hidden" ? "active" : ""}" data-lib-browse="folders">${icon("folder", 15)}Folders</button>
       <button class="fchip ${state.libBrowse === "tags" ? "active" : ""}" data-lib-browse="tags">${icon("tag", 15)}Tags</button>
     </div>`;
+
+  /* home: the files you bookmarked for quick access, in your order */
+  if (state.libBrowse === "home") {
+    const byPath = {};
+    m.articles.forEach((a) => { byPath[a.path] = a; });
+    const picks = lib.home.map((p) => byPath[p]).filter((a) => a && !isHiddenPath(a.path, lib.hidden));
+    return `${search}${modes}
+      ${picks.length ? `<div class="art-list">${picks.map((a, i) => artCard(a, i, true)).join("")}</div>`
+        : `<div class="empty">Nothing on your home yet. Open any file from Folders or Tags and tap ${icon("bookmark", 14)} to add it here.</div>`}`;
+  }
+
+  /* hidden: everything left out of Articles, each with Unhide */
+  if (state.libBrowse === "hidden") {
+    const byPath = {};
+    m.articles.forEach((a) => { byPath[a.path] = a; });
+    const rows = lib.hidden.map((h) => {
+      const isDir = h.endsWith("/");
+      const n = isDir ? m.articles.filter((a) => a.path.startsWith(h)).length : 0;
+      const a = byPath[h];
+      const label = isDir ? folderLabel(h.slice(0, -1)) : a ? a.title : h.split("/").pop();
+      const sub = isDir ? `Folder · ${n} file${n === 1 ? "" : "s"}` : a ? [folderLabel(a.folder), fileHint(a)].filter(Boolean).join(" · ") : "File not in the vault any more";
+      return `
+        <div class="hidden-row">
+          <span class="folder-ico">${icon(isDir ? "folder" : "note", 20)}</span>
+          <span class="hidden-txt"><b>${esc(label)}</b><small>${esc(sub)}</small></span>
+          <button class="icon-pill label off" data-unhide="${esc(h)}">${icon("eye", 16)}Unhide</button>
+        </div>`;
+    });
+    return `${search}${modes}
+      ${backLink("btn-hidden-back", "Folders")}
+      <div class="lib-count">Hidden from Articles</div>
+      ${rows.length ? `<div class="folder-list">${rows.join("")}</div>` : `<div class="empty">Nothing hidden.</div>`}`;
+  }
 
   if (state.libBrowse === "tags") {
     const tags = tagIndex(all);
@@ -3272,6 +3373,11 @@ function renderLibraryFiles(m) {
   const sys = (f) => (f.startsWith("_") ? 1 : 0);
   const folders = Object.keys(sub).sort((x, y) => sys(x) - sys(y) || x.localeCompare(y));
   const files = all.filter((a) => a.folder === dir);
+  const footer = dir
+    ? `<button class="ghost sm lib-hide-folder" id="btn-hide-folder" data-folder="${esc(dir)}">${icon("eyeoff", 16)}Hide this folder</button>`
+    : lib.hidden.length ? `<button class="folder-row" id="btn-lib-hidden">
+        <span class="folder-ico">${icon("eyeoff", 20)}</span><span class="folder-name">Hidden</span>
+        <span class="folder-n">${lib.hidden.length}</span>${icon("chevr", 18)}</button>` : "";
   return `${search}${modes}${breadcrumb}
     ${folders.length ? `<div class="folder-list">${folders.map((f) => `
       <button class="folder-row" data-lib-folder="${esc(prefix + f)}">
@@ -3281,7 +3387,8 @@ function renderLibraryFiles(m) {
         ${icon("chevr", 18)}
       </button>`).join("")}</div>` : ""}
     ${files.length ? `<div class="art-list">${files.map((a, i) => artCard(a, i, false)).join("")}</div>` : ""}
-    ${!folders.length && !files.length ? `<div class="empty">This folder is empty.</div>` : ""}`;
+    ${!folders.length && !files.length ? `<div class="empty">This folder is empty.</div>` : ""}
+    ${footer}`;
 }
 
 /* "2026-10-25 14:03" → "Sun, Oct 25 · 14:03" */
@@ -3355,8 +3462,16 @@ function renderArticles(m) {
     if (a) {
       const meta = [a.author, `${a.minutes} min read`, a.created].filter(Boolean).join(" · ");
       const backTo = state.articleTrail.length ? "Back" : state.articleReturn === "today" ? "Today" : "Library";
+      const lib = librarySettings(m.articles);
+      const onHome = lib.home.includes(a.path);
       return `
-      ${backLink("btn-art-back", backTo)}
+      <div class="note-actions">
+        ${backLink("btn-art-back", backTo)}
+        <span class="note-actions-r">
+          <button class="icon-pill" id="btn-art-hide" title="Hide from Articles" aria-label="Hide from Articles">${icon("eyeoff", 18)}</button>
+          <button class="icon-pill label${onHome ? "" : " off"}" id="btn-art-home" aria-pressed="${onHome}">${icon("bookmark", 16)}${onHome ? "On home" : "Add to home"}</button>
+        </span>
+      </div>
       <article class="article">
         <button class="art-path" data-art-folder="${esc(a.folder)}">${esc(folderLabel(a.folder))} /</button>
         <h1>${esc(a.title)}</h1>
@@ -3856,8 +3971,35 @@ function render() {
     const tagsAll = $("#btn-tags-all");
     if (tagsAll) tagsAll.onclick = () => { state.tagsAll = !state.tagsAll; render(); };
     document.querySelectorAll("[data-lib-browse]").forEach((b) => {
-      b.onclick = () => { state.libBrowse = b.dataset.libBrowse; render(); };
+      b.onclick = () => { state.libBrowse = b.dataset.libBrowse; render(); scrollTo(0, 0); };
     });
+    const hiddenOpen = $("#btn-lib-hidden");
+    if (hiddenOpen) hiddenOpen.onclick = () => { state.libBrowse = "hidden"; render(); scrollTo(0, 0); };
+    const hiddenBack = $("#btn-hidden-back");
+    if (hiddenBack) hiddenBack.onclick = () => { state.libBrowse = "folders"; render(); scrollTo(0, 0); };
+    document.querySelectorAll("[data-unhide]").forEach((b) => {
+      b.onclick = () => updateLibrary((l) => ({ ...l, hidden: l.hidden.filter((h) => h !== b.dataset.unhide) }));
+    });
+    const hideFolder = $("#btn-hide-folder");
+    if (hideFolder) hideFolder.onclick = async () => {
+      const dir = hideFolder.dataset.folder;
+      if (!(await confirmBox("Hide this folder?", `${folderLabel(dir)} and everything in it leave Articles. Unhide it any time from Folders → Hidden.`, "Hide"))) return;
+      state.libFolder = folderOf(dir);
+      updateLibrary((l) => ({ ...l, hidden: [...l.hidden, dir + "/"] }));
+    };
+    const artHome = $("#btn-art-home");
+    if (artHome) artHome.onclick = () => {
+      const path = state.article;
+      updateLibrary((l) => ({ ...l, home: l.home.includes(path) ? l.home.filter((p) => p !== path) : [path, ...l.home] }));
+    };
+    const artHide = $("#btn-art-hide");
+    if (artHide) artHide.onclick = async () => {
+      const path = state.article;
+      const a = m.articles.find((x) => x.path === path);
+      if (!(await confirmBox("Hide this file?", `"${a ? a.title : path}" leaves Articles (and your home). Unhide it any time from Folders → Hidden.`, "Hide"))) return;
+      updateLibrary((l) => ({ ...l, hidden: [...l.hidden, path] }));
+      $("#btn-art-back").click();
+    };
     document.querySelectorAll("[data-lib-folder]").forEach((b) => {
       b.onclick = () => { state.libFolder = b.dataset.libFolder; render(); scrollTo(0, 0); };
     });
@@ -4590,6 +4732,8 @@ window.kernelBack = function () {
   if (state.view === "articles" && state.libTab === "articles" && state.libBrowse === "folders" && state.libFolder) {
     state.libFolder = folderOf(state.libFolder); render(); scrollTo(0, 0); return true;
   }
+  if (state.view === "articles" && state.libTab === "articles" && state.libBrowse === "hidden") { state.libBrowse = "folders"; render(); return true; }
+  if (state.view === "articles" && state.libTab === "articles" && state.libBrowse !== "home") { state.libBrowse = "home"; render(); scrollTo(0, 0); return true; }
   if (state.view === "settings") { goToTab(state.settingsFrom || "today"); return true; }
   if (state.view === "indrive" || state.view === "clients") { goToTab(state.subFrom || "settings"); return true; }
   if (state.view !== "today") { goToTab("today"); return true; }

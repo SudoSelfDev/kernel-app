@@ -768,6 +768,13 @@ input[readonly] { color: var(--mu); }
 .art-path + h1 { margin-top: 4px; }
 .art-tags-top { margin: -4px 0 8px; }
 .art-tags-top .pill { cursor: pointer; font: inherit; font-size: 11px; font-weight: 800; color: var(--tx); background: transparent; }
+.icon-pill.label.off { background: transparent; border-color: var(--ru); color: var(--tx); }
+.hidden-row { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 8px 2px; border-bottom: 1px solid var(--hr); }
+.hidden-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hidden-txt b { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.hidden-txt small { font-size: 12px; color: var(--mu); }
+.lib-hide-folder { align-self: flex-start; color: var(--mu); }
+.empty svg { vertical-align: -2px; }
 .wikilink.live { text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 
 /* ---------- notes (Library) ---------- */
