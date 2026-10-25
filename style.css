@@ -456,7 +456,6 @@ input[readonly] { color: var(--mu); }
 .fill-tile .ft-kicker { font-size: 10px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.85; }
 .fill-tile .ft-title { font-family: var(--font-display); font-size: 22px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
 
-.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .duo-tile { padding: 14px 14px 16px; }
 .duo-tile > span { display: block; }
 .duo-tile > .duo-head { display: flex; }

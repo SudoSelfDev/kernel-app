@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "73";
+const WEB_VERSION = "74";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -2332,7 +2332,6 @@ function renderToday(m) {
     : pct >= 50 ? "You're on track. Keep going." : "Let's get moving.";
 
   const studyPct = m.study && m.study.total ? Math.round((m.study.done / m.study.total) * 100) : 0;
-  const idRows = m.indrive ? m.indrive.rows.length : 0;
 
   return `
   <div class="hero">
@@ -2364,20 +2363,13 @@ function renderToday(m) {
     ${icon("chevr", 22)}
   </button>
 
-  <div class="duo">
-    ${m.study ? `
-    <button class="card duo-tile" id="btn-study-open" data-acc="read" title="Open the study plan">
-      <span class="duo-head">${icon("book", 16)}<span>Cloud study</span></span>
-      <span class="duo-val">${m.study.done}<small>/${m.study.total}</small></span>
-      <span class="bar thin"><span style="width:${studyPct}%"></span></span>
-      <span class="duo-sub">${studyPct}% · ${esc(m.study.title)}</span>
-    </button>` : ""}
-    <button class="card duo-tile" id="btn-indrive-open" data-acc="indrive" title="Open inDrive">
-      <span class="duo-head">${icon("car", 16)}<span>inDrive net</span></span>
-      <span class="duo-val">${m.indrive ? fmt0(m.indrive.totalNet) : "—"}</span>
-      <span class="duo-sub">MAD · ${idRows ? `${idRows} day${idRows === 1 ? "" : "s"} logged` : "no entries yet"}</span>
-    </button>
-  </div>`;
+  ${m.study ? `
+  <button class="card duo-tile" id="btn-study-open" data-acc="read" title="Open the study plan">
+    <span class="duo-head">${icon("book", 16)}<span>Cloud study</span></span>
+    <span class="duo-val">${m.study.done}<small>/${m.study.total}</small></span>
+    <span class="bar thin"><span style="width:${studyPct}%"></span></span>
+    <span class="duo-sub">${studyPct}% · ${esc(m.study.title)}</span>
+  </button>` : ""}`;
 }
 
 /* ---------- Clients ---------- */
@@ -3227,8 +3219,6 @@ function render() {
     });
     const studyOpen = $("#btn-study-open");
     if (studyOpen) studyOpen.onclick = () => { state.studyDoc = true; showBars(); render(); scrollTo(0, 0); };
-    const indriveOpen = $("#btn-indrive-open");
-    if (indriveOpen) indriveOpen.onclick = () => goToTab("indrive");
     const gymOpen = $("#btn-gym-open");
     if (gymOpen) gymOpen.onclick = () => goToTab("gym");
     const moreT = $("#btn-tasks-more");
