@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "75";
+const WEB_VERSION = "76";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -40,6 +40,10 @@ const state = {
   articleTag: "",     // Read-tab category chip filter ("" = All)
   articleQuery: "",   // Read-tab search filter
   libTab: "notes",    // Library segment: "notes" | "articles"
+  libBrowse: "folders", // Articles browse mode: "folders" | "tags"
+  libFolder: "",      // folder open in the Articles browser ("" = vault root)
+  tagsAll: false,     // show every tag instead of the most used ones
+  articleTrail: [],   // articles opened by following [[links]] — Back walks back through them
   note: null,         // path of the open note, or null for the list
   noteEdit: false,    // the open note is in edit mode (title + text fields)
   noteQuery: "",      // Notes search filter
@@ -384,6 +388,9 @@ const ICONS = {
   search: "M21 21l-4.34-4.34 M3 11a8 8 0 1 0 16 0 8 8 0 1 0-16 0",
   ext: "M15 3h6v6 M10 14 21 3 M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
   trash: "M3 6h18 M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6 M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2",
+  folder: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
+  tag: "M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.7 8.7a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42z M7.5 7.5h.01",
+  note: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z M14 2v4a2 2 0 0 0 2 2h4 M10 9H8 M16 13H8 M16 17H8",
   pin: "M12 17v5 M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z",
   listcheck: "m3 17 2 2 4-4 M3 7l2 2 4-4 M13 6h8 M13 12h8 M13 18h8",
   bell: "M10.27 21a2 2 0 0 0 3.46 0 M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.41 13.96 18 12.5 18 8A6 6 0 0 0 6 8c0 4.5-1.41 5.96-2.74 7.33",
@@ -598,17 +605,19 @@ async function syncAll() {
       fetchRaw(PATHS.indrive, { optional: true }),
       fetchRaw(PATHS.gym, { optional: true }),
     ]);
-    /* #Research articles can live anywhere under Projects/Library/top-level
-       Lifelog now — fetch every candidate and keep only the tagged ones */
-    let articles = [];
-    const candidates = (tree || []).filter((t) => t.type === "blob" && isResearchCandidate(t.path));
-    const texts = await Promise.all(candidates.map((f) => fetchRaw(f.path, { optional: true })));
-    candidates.forEach((f, i) => {
-      const text = texts[i];
-      if (text && hasResearchTag(text)) {
-        articles.push({ name: f.path.split("/").pop(), path: f.path, text });
-      }
-    });
+    /* the Library's Articles are every markdown file in the vault except daily notes and Notes;
+       a file whose blob SHA hasn't changed is reused from the cache instead of downloaded again */
+    let articles = state.files.articles || [];
+    if (tree) {
+      const cachedArt = {};
+      articles.forEach((a) => { cachedArt[a.path] = a; });
+      articles = (await Promise.all(tree.filter((t) => t.type === "blob" && isLibraryFile(t.path)).map(async (t) => {
+        const c = cachedArt[t.path];
+        if (c && c.sha === t.sha) return c;
+        const text = await fetchRaw(t.path, { optional: true });
+        return text == null ? null : { name: t.path.split("/").pop(), path: t.path, sha: t.sha, text };
+      }))).filter(Boolean);
+    }
     const notes = tree ? await syncNotes(tree) : state.files.notes || [];
     state.files = { clients, savings, debts, studyplan, daily, articles, masterplan, habits, transport, indrive, gym, notes };
     state.lastSync = Date.now();
@@ -1222,12 +1231,12 @@ function frontmatterTags(md) {
   const fm = (md || "").match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!fm) return [];
   const block = fm[1];
-  const line = block.match(/^tags:[ \t]*(.*)$/m);
+  const line = block.match(/^tags::?[ \t]*(.*)$/m);
   if (!line) return [];
   const inline = line[1].trim();
-  if (inline.startsWith("[")) {
+  if (inline) {
     return inline.replace(/^\[|\]$/g, "").split(",")
-      .map((t) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+      .map((t) => t.trim().replace(/^["'#]+|["']$/g, "")).filter(Boolean);
   }
   const after = block.slice(block.indexOf(line[0]) + line[0].length).split("\n");
   const items = [];
@@ -1238,18 +1247,18 @@ function frontmatterTags(md) {
   }
   return items;
 }
-const hasResearchTag = (md) => frontmatterTags(md).some((t) => t.toLowerCase() === "research");
-
-/* folders worth scanning for #Research-tagged articles — deliberately
-   excludes 21_DailyNotes, _Daemon, 90_Archive, .trash, 00_Inbox: real content
-   lives in Projects/Library, not internal ops or daily task logs */
-function isResearchCandidate(path) {
+/* what the Library's Articles list: every markdown file, minus daily notes, Notes (their own section)
+   and hidden folders (.trash, .obsidian, .claude …) */
+function isLibraryFile(path) {
   if (!path.endsWith(".md")) return false;
-  if (path.startsWith("10_Projects/")) return true;
-  if (path.startsWith("30_Library/")) return true;
-  if (path.startsWith("20_Lifelog/") && !path.slice("20_Lifelog/".length).includes("/")) return true;
-  return false;
+  if (path.split("/").some((seg) => seg.startsWith("."))) return false;
+  return !path.startsWith(PATHS.dailyDir) && !path.startsWith(PATHS.notesDir);
 }
+
+/* "10_Projects" → "Projects", "_Daemon" → "Daemon", "Cloud_Engineering" → "Cloud Engineering" */
+const prettyFolder = (seg) => seg.replace(/^\d+_/, "").replace(/^_+/, "").replace(/_/g, " ");
+const folderOf = (path) => path.split("/").slice(0, -1).join("/");
+const folderLabel = (dir) => (dir ? dir.split("/").map(prettyFolder).join(" / ") : "Vault");
 
 const num = (s) => {
   const m = String(s || "").replace(/,/g, "").match(/-?\d+(\.\d+)?/);
@@ -1282,7 +1291,7 @@ function mdInline(s) {
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
   s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
   s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<i>$2</i>");
-  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, t, alias) => `<span class="wikilink">${alias || t}</span>`);
+  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, t, alias) => `<span class="wikilink" data-wikilink="${t}">${alias || t}</span>`);
   s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   return s;
 }
@@ -1604,24 +1613,27 @@ function buildModel() {
     m.articles = f.articles.map((a) => {
       const fm = frontmatter(a.text);
       const body = stripFrontmatter(a.text);
-      const title = fm.title
-        || (a.text.match(/^#\s+(.+)$/m) || [])[1]
-        || a.name.replace(/\.md$/, "").split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+      const clean = (v) => String(v || "").replace(/^[:\s]+/, "").replace(/\[\[|\]\]/g, "").replace(/^["']|["']$/g, "").trim();
+      const fileTitle = a.name.replace(/\.md$/, "").replace(/[-_]+/g, " ").trim();
+      const title = clean(fm.title) || clean(fm.name)
+        || ((body.replace(/^```[\s\S]*?^```/gm, "").match(/^#\s+(.+)$/m) || [])[1] || "").trim()
+        || (fileTitle ? fileTitle[0].toUpperCase() + fileTitle.slice(1) : a.name);
       const para = body.split("\n").find((l) => l.trim() && !/^[#\-*>|!\[`]/.test(l.trim()));
       const words = body.split(/\s+/).filter(Boolean).length;
       return {
         name: a.name,
         path: a.path,
+        folder: folderOf(a.path),
         title,
-        created: String(fm.created || "").replace(/^[:\s]+/, ""),
-        topic: fm.topic || "",
-        author: fm.author || "",
-        tags: frontmatterTags(a.text).filter((t) => t.toLowerCase() !== "research"),
+        created: clean(fm.created || fm.date || fm.date_created),
+        topic: clean(fm.topic || fm.subject),
+        author: clean(fm.author || fm.authored || fm.created_by),
+        tags: frontmatterTags(a.text),
         minutes: Math.max(1, Math.round(words / 200)),
         excerpt: para ? (para.length > 160 ? para.slice(0, 160).trimEnd() + "…" : para) : "",
         body,
       };
-    }).sort((x, y) => (y.created || "").localeCompare(x.created || ""));
+    }).sort((x, y) => x.title.localeCompare(y.title));
   }
 
   return m;
@@ -1736,6 +1748,7 @@ function openArticle(name, from) {
   state.view = "articles";
   state.article = name;
   state.articleReturn = from || null;
+  state.articleTrail = [];
   showBars();
   render();
   scrollTo(0, 0);
@@ -3146,14 +3159,129 @@ function renderHabits(m) {
 
 /* ---------- Library ---------- */
 
-/* Library = Notes (yours, editable) + Articles (research notes, read-only) */
-function libSeg(m) {
-  const notes = (state.files.notes || []).length;
+let _libSwap = null; // pending Notes/Articles swap while the pill slides
+
+/* Library = Notes (yours, editable) + Articles (every other vault file, read-only) — a sliding pill switches */
+function libSeg() {
   return `
-    <div class="seg acc lg">
-      <button data-lib-tab="notes" class="${state.libTab === "notes" ? "active" : ""}">Notes${notes ? ` (${notes})` : ""}</button>
-      <button data-lib-tab="articles" class="${state.libTab === "articles" ? "active" : ""}">Articles${m.articles.length ? ` (${m.articles.length})` : ""}</button>
+    <div class="lib-toggle" id="lib-toggle" data-on="${state.libTab}" role="tablist">
+      <span class="lib-thumb"></span>
+      <button data-lib-tab="notes" role="tab" aria-selected="${state.libTab === "notes"}">${icon("note", 16)}Notes</button>
+      <button data-lib-tab="articles" role="tab" aria-selected="${state.libTab === "articles"}">${icon("book", 16)}Articles</button>
     </div>`;
+}
+
+/* show the file name when the title doesn't give it away (CLAUDE.md is titled "Daemon — Operating Instructions") */
+function fileHint(a) {
+  const squash = (x) => x.toLowerCase().replace(/\.md$/, "").replace(/[^a-z0-9]/g, "");
+  return squash(a.title).includes(squash(a.name)) ? "" : a.name;
+}
+
+function artCard(a, i, withFolder) {
+  const meta = [withFolder ? folderLabel(a.folder) : "", fileHint(a), a.author, `${a.minutes} min read`].filter(Boolean).join(" · ");
+  return `
+      <button class="art-card" data-article="${esc(a.path)}">
+        <span class="art-thumb${i % 2 ? " ink" : ""}">${esc((a.title.trim()[0] || "•").toUpperCase())}</span>
+        <span class="art-body">
+          <span class="art-title">${esc(a.title)}</span>
+          <span class="art-meta">${esc(meta)}</span>
+          ${(a.tags || []).length ? `<span class="art-tags">${a.tags.slice(0, 3).map((t) => `<span class="pill">${esc(t)}</span>`).join("")}</span>` : ""}
+        </span>
+      </button>`;
+}
+
+/* tags merged case-insensitively ("Research" = "research"), most used first */
+function tagIndex(articles) {
+  const by = {};
+  articles.forEach((a) => (a.tags || []).forEach((t) => {
+    const k = t.toLowerCase();
+    if (!by[k]) by[k] = { key: k, label: t, n: 0 };
+    by[k].n++;
+  }));
+  return Object.values(by).sort((x, y) => y.n - x.n || x.label.localeCompare(y.label));
+}
+const hasTag = (a, key) => (a.tags || []).some((t) => t.toLowerCase() === key);
+
+function renderLibraryFiles(m) {
+  const all = m.articles;
+  const q = state.articleQuery.trim().toLowerCase();
+  const search = `
+    <div class="search-bar">
+      ${icon("search", 18)}
+      <input type="search" id="art-search" placeholder="Search ${all.length} file${all.length === 1 ? "" : "s"}" value="${esc(state.articleQuery)}" autocomplete="off">
+      ${q ? `<button class="search-clear" id="art-search-clear" aria-label="Clear search">${icon("x", 16)}</button>` : ""}
+    </div>`;
+  if (!all.length) return `${search}<div class="empty">Nothing synced from the vault yet — pull to refresh.</div>`;
+
+  /* searching looks across the whole vault, whatever the browse mode */
+  if (q) {
+    const hits = all.filter((a) => [a.title, a.name, folderLabel(a.folder), a.topic, a.author, a.body, (a.tags || []).join(" ")]
+      .some((f) => (f || "").toLowerCase().includes(q)));
+    const shown = hits.slice(0, 60);
+    return `${search}
+      ${hits.length ? `<div class="lib-count">${hits.length} match${hits.length === 1 ? "" : "es"}${hits.length > shown.length ? ` · showing ${shown.length}` : ""}</div>
+      <div class="art-list">${shown.map((a, i) => artCard(a, i, true)).join("")}</div>`
+      : `<div class="empty">Nothing matches "${esc(state.articleQuery)}"</div>`}`;
+  }
+
+  const modes = `
+    <div class="lib-modes">
+      <button class="fchip ${state.libBrowse === "folders" ? "active" : ""}" data-lib-browse="folders">${icon("folder", 15)}Folders</button>
+      <button class="fchip ${state.libBrowse === "tags" ? "active" : ""}" data-lib-browse="tags">${icon("tag", 15)}Tags</button>
+    </div>`;
+
+  if (state.libBrowse === "tags") {
+    const tags = tagIndex(all);
+    if (state.articleTag && !tags.some((t) => t.key === state.articleTag)) state.articleTag = "";
+    const chip = (t) => `<button class="tag-chip ${state.articleTag === t.key ? "active" : ""}" data-art-tag="${esc(t.key)}">${esc(t.label)}<span>${t.n}</span></button>`;
+    /* a picked tag folds the cloud down to that one chip, so its files sit right under it */
+    if (state.articleTag) {
+      const t = tags.find((x) => x.key === state.articleTag);
+      const picked = all.filter((a) => hasTag(a, state.articleTag));
+      return `${search}${modes}
+        <div class="tag-cloud">${chip(t)}<button class="ghost sm" data-art-tag="${esc(t.key)}">${icon("x", 14)}Clear</button></div>
+        <div class="art-list">${picked.map((a, i) => artCard(a, i, true)).join("")}</div>`;
+    }
+    const TOP = 18;
+    const shown = state.tagsAll ? tags : tags.slice(0, TOP);
+    return `${search}${modes}
+      <div class="tag-cloud">
+        ${shown.map(chip).join("")}
+        ${tags.length > TOP ? `<button class="ghost sm" id="btn-tags-all">${state.tagsAll ? "Fewer tags" : `All ${tags.length} tags`}</button>` : ""}
+      </div>
+      <div class="empty">Pick a tag to see its files.</div>`;
+  }
+
+  /* folder browser: breadcrumb, subfolders (with how many files they hold), then this folder's files */
+  let dir = state.libFolder;
+  if (dir && !all.some((a) => a.folder === dir || a.folder.startsWith(dir + "/"))) dir = state.libFolder = "";
+  const crumbs = dir ? dir.split("/") : [];
+  const breadcrumb = `
+    <div class="crumbs">
+      <button data-lib-folder="" class="${dir ? "" : "here"}">Vault</button>
+      ${crumbs.map((c, i) => `<span class="crumb-sep">/</span><button data-lib-folder="${esc(crumbs.slice(0, i + 1).join("/"))}" class="${i === crumbs.length - 1 ? "here" : ""}">${esc(prettyFolder(c))}</button>`).join("")}
+    </div>`;
+  const prefix = dir ? dir + "/" : "";
+  const sub = {};
+  all.forEach((a) => {
+    if (!a.path.startsWith(prefix)) return;
+    const rest = a.path.slice(prefix.length).split("/");
+    if (rest.length > 1) sub[rest[0]] = (sub[rest[0]] || 0) + 1;
+  });
+  /* numbered folders in vault order first, then the _system ones (_Daemon, _Templates) */
+  const sys = (f) => (f.startsWith("_") ? 1 : 0);
+  const folders = Object.keys(sub).sort((x, y) => sys(x) - sys(y) || x.localeCompare(y));
+  const files = all.filter((a) => a.folder === dir);
+  return `${search}${modes}${breadcrumb}
+    ${folders.length ? `<div class="folder-list">${folders.map((f) => `
+      <button class="folder-row" data-lib-folder="${esc(prefix + f)}">
+        <span class="folder-ico">${icon("folder", 20)}</span>
+        <span class="folder-name">${esc(prettyFolder(f))}</span>
+        <span class="folder-n">${sub[f]}</span>
+        ${icon("chevr", 18)}
+      </button>`).join("")}</div>` : ""}
+    ${files.length ? `<div class="art-list">${files.map((a, i) => artCard(a, i, false)).join("")}</div>` : ""}
+    ${!folders.length && !files.length ? `<div class="empty">This folder is empty.</div>` : ""}`;
 }
 
 /* "2026-10-25 14:03" → "Sun, Oct 25 · 14:03" */
@@ -3221,62 +3349,26 @@ function renderArticles(m) {
     const html = renderNote();
     if (html) return html;
   }
-  if (state.libTab === "notes" && !state.article) return libSeg(m) + renderNotesList();
+  if (state.libTab === "notes" && !state.article) return libSeg() + renderNotesList();
   if (state.article) {
     const a = m.articles.find((x) => x.path === state.article);
     if (a) {
       const meta = [a.author, `${a.minutes} min read`, a.created].filter(Boolean).join(" · ");
-      const kicker = (a.tags || []).slice(0, 2).join(" · ");
+      const backTo = state.articleTrail.length ? "Back" : state.articleReturn === "today" ? "Today" : "Library";
       return `
-      ${backLink("btn-art-back", state.articleReturn === "today" ? "Today" : "Library")}
+      ${backLink("btn-art-back", backTo)}
       <article class="article">
-        ${kicker ? `<div class="art-kicker">${esc(kicker)}</div>` : ""}
+        <button class="art-path" data-art-folder="${esc(a.folder)}">${esc(folderLabel(a.folder))} /</button>
         <h1>${esc(a.title)}</h1>
         <div class="art-meta muted">${esc(meta)}</div>
-        ${mdToHtml(a.body.replace(/^#\s+.+\n/, ""))}
+        ${(a.tags || []).length ? `<div class="art-tags art-tags-top">${a.tags.map((t) => `<button class="pill" data-art-tagjump="${esc(t.toLowerCase())}">${esc(t)}</button>`).join("")}</div>` : ""}
+        ${mdToHtml(a.body.replace(/^\s*#\s+.+\n/, ""))}
       </article>
       <button class="art-float-back" id="btn-art-float-back" aria-label="Back to articles">${icon("back", 22)}</button>`;
     }
     state.article = null;
   }
-  if (!m.articles.length) return `${libSeg(m)}<div class="empty">No research articles in the vault yet</div>`;
-
-  const q = state.articleQuery.trim().toLowerCase();
-  const tagCounts = {};
-  m.articles.forEach((a) => (a.tags || []).forEach((t) => { tagCounts[t] = (tagCounts[t] || 0) + 1; }));
-  const topTags = Object.keys(tagCounts).sort((x, y) => tagCounts[y] - tagCounts[x]).slice(0, 8);
-  if (state.articleTag && !topTags.includes(state.articleTag)) state.articleTag = "";
-  const matches = m.articles.filter((a) =>
-    (!state.articleTag || (a.tags || []).includes(state.articleTag)) &&
-    (!q || [a.title, a.excerpt, a.topic, a.author, a.body, (a.tags || []).join(" ")].some((f) => (f || "").toLowerCase().includes(q))));
-
-  const search = `
-    <div class="search-bar">
-      ${icon("search", 18)}
-      <input type="search" id="art-search" placeholder="Search ${m.articles.length} article${m.articles.length === 1 ? "" : "s"}" value="${esc(state.articleQuery)}" autocomplete="off">
-      ${q ? `<button class="search-clear" id="art-search-clear" aria-label="Clear search">${icon("x", 16)}</button>` : ""}
-    </div>
-    ${topTags.length ? `<div class="chip-scroll">
-      <button class="fchip ${state.articleTag ? "" : "active"}" data-art-tag="">All</button>
-      ${topTags.map((t) => `<button class="fchip ${state.articleTag === t ? "active" : ""}" data-art-tag="${esc(t)}">${esc(t)}</button>`).join("")}
-    </div>` : ""}`;
-
-  const list = matches.length
-    ? `<div class="art-list">${matches.map((a, i) => {
-        const meta = [a.author, `${a.minutes} min read`, a.created].filter(Boolean).join(" · ");
-        return `
-      <button class="art-card" data-article="${esc(a.path)}">
-        <span class="art-thumb${i % 2 ? " ink" : ""}">${esc((a.title.trim()[0] || "•").toUpperCase())}</span>
-        <span class="art-body">
-          <span class="art-title">${esc(a.title)}</span>
-          <span class="art-meta">${esc(meta)}</span>
-          ${(a.tags || []).length ? `<span class="art-tags">${a.tags.slice(0, 2).map((t) => `<span class="pill">${esc(t)}</span>`).join("")}</span>` : ""}
-        </span>
-      </button>`;
-      }).join("")}</div>`
-    : `<div class="empty">No articles match${q ? ` "${esc(state.articleQuery)}"` : ""}</div>`;
-
-  return libSeg(m) + search + list;
+  return libSeg() + renderLibraryFiles(m);
 }
 
 /* wire the open note's buttons, editor fields and checklist boxes */
@@ -3751,8 +3843,23 @@ function render() {
     if (hs) hs.onclick = healthSyncNow;
   }
   if (v === "articles") {
+    /* slide the pill first, then swap the content underneath it */
     document.querySelectorAll("[data-lib-tab]").forEach((b) => {
-      b.onclick = () => { state.libTab = b.dataset.libTab; state.article = null; render(); scrollTo(0, 0); };
+      b.onclick = () => {
+        const tab = b.dataset.libTab, toggle = $("#lib-toggle");
+        if (tab === toggle.dataset.on) return; // compare with the pill, not state — a quick second tap must still count
+        toggle.dataset.on = tab;
+        clearTimeout(_libSwap);
+        _libSwap = setTimeout(() => { state.libTab = tab; state.article = null; render(); scrollTo(0, 0); }, 170);
+      };
+    });
+    const tagsAll = $("#btn-tags-all");
+    if (tagsAll) tagsAll.onclick = () => { state.tagsAll = !state.tagsAll; render(); };
+    document.querySelectorAll("[data-lib-browse]").forEach((b) => {
+      b.onclick = () => { state.libBrowse = b.dataset.libBrowse; render(); };
+    });
+    document.querySelectorAll("[data-lib-folder]").forEach((b) => {
+      b.onclick = () => { state.libFolder = b.dataset.libFolder; render(); scrollTo(0, 0); };
     });
     document.querySelectorAll("[data-note]").forEach((b) => {
       b.onclick = () => { state.note = b.dataset.note; state.noteEdit = false; showBars(); render(); scrollTo(0, 0); };
@@ -3771,13 +3878,30 @@ function render() {
     if (noteClr) noteClr.onclick = () => { state.noteQuery = ""; render(); const s = $("#note-search"); if (s) s.focus(); };
     if (state.note) bindNote();
     document.querySelectorAll("[data-article]").forEach((b) => {
-      b.onclick = () => { state.article = b.dataset.article; state.articleReturn = null; showBars(); render(); scrollTo(0, 0); };
+      b.onclick = () => { state.article = b.dataset.article; state.articleReturn = null; state.articleTrail = []; showBars(); render(); scrollTo(0, 0); };
     });
     const goBack = () => {
+      if (state.articleTrail.length) { state.article = state.articleTrail.pop(); showBars(); render(); scrollTo(0, 0); return; }
       state.article = null;
       if (state.articleReturn) { state.view = state.articleReturn; state.articleReturn = null; }
       showBars(); render(); scrollTo(0, 0);
     };
+    /* in the reader: the folder path opens that folder, a tag opens its list, a [[link]] opens the linked file */
+    const leaveReader = () => { state.article = null; state.articleReturn = null; state.articleTrail = []; state.libTab = "articles"; state.articleQuery = ""; };
+    document.querySelectorAll("[data-art-folder]").forEach((b) => {
+      b.onclick = () => { leaveReader(); state.libBrowse = "folders"; state.libFolder = b.dataset.artFolder; showBars(); render(); scrollTo(0, 0); };
+    });
+    document.querySelectorAll("[data-art-tagjump]").forEach((b) => {
+      b.onclick = () => { leaveReader(); state.libBrowse = "tags"; state.articleTag = b.dataset.artTagjump; showBars(); render(); scrollTo(0, 0); };
+    });
+    if (state.article) {
+      document.querySelectorAll(".article [data-wikilink]").forEach((el) => {
+        const target = resolveArticle(el.dataset.wikilink.split("#")[0], m.articles);
+        if (!target) return;
+        el.classList.add("live");
+        el.onclick = () => { state.articleTrail.push(state.article); state.article = target.path; render(); scrollTo(0, 0); };
+      });
+    }
     const back = $("#btn-art-back");
     if (back) back.onclick = goBack;
     const floatBack = $("#btn-art-float-back");
@@ -3792,7 +3916,9 @@ function render() {
         if (again) { again.focus(); again.setSelectionRange(pos, pos); }
       };
     }
-    document.querySelectorAll("[data-art-tag]").forEach((b) => { b.onclick = () => { state.articleTag = b.dataset.artTag; render(); }; });
+    document.querySelectorAll("[data-art-tag]").forEach((b) => {
+      b.onclick = () => { state.articleTag = state.articleTag === b.dataset.artTag ? "" : b.dataset.artTag; render(); };
+    });
     const clr = $("#art-search-clear");
     if (clr) clr.onclick = () => { state.articleQuery = ""; render(); const s = $("#art-search"); if (s) s.focus(); };
   }
@@ -4460,6 +4586,10 @@ window.kernelBack = function () {
     return true;
   }
   if (state.view === "articles" && state.article) { $("#btn-art-back").click(); return true; }
+  if (state.view === "articles" && state.libTab === "articles" && state.articleQuery) { state.articleQuery = ""; render(); return true; }
+  if (state.view === "articles" && state.libTab === "articles" && state.libBrowse === "folders" && state.libFolder) {
+    state.libFolder = folderOf(state.libFolder); render(); scrollTo(0, 0); return true;
+  }
   if (state.view === "settings") { goToTab(state.settingsFrom || "today"); return true; }
   if (state.view === "indrive" || state.view === "clients") { goToTab(state.subFrom || "settings"); return true; }
   if (state.view !== "today") { goToTab("today"); return true; }
