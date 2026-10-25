@@ -20,7 +20,7 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preload" href="fonts/dm-sans-var.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="preload" href="fonts/bricolage-grotesque-var.ttf" as="font" type="font/ttf" crossorigin>
-  <link rel="stylesheet" href="style.css?v=74">
+  <link rel="stylesheet" href="style.css?v=75">
 </head>
 <body data-acc="today">
   <header id="topbar">
@@ -39,9 +39,13 @@
     <div class="sheet">
       <div class="sheet-kicker">Today</div>
       <h3 class="sheet-title">Add tasks</h3>
+      <div class="seg acc" id="composer-mode">
+        <button type="button" data-cmode="tasks" class="active">Tasks</button>
+        <button type="button" data-cmode="note">Note</button>
+      </div>
       <textarea id="composer-text" rows="4" placeholder="What needs doing? Type / to link an article."></textarea>
       <div id="composer-articles" class="composer-articles hidden"></div>
-      <p class="hint">One task per line · saved in one sync</p>
+      <p class="hint" id="composer-hint">One task per line · saved in one sync</p>
       <div class="btn-row">
         <button class="btn secondary" id="composer-cancel">Cancel</button>
         <button class="btn" id="composer-add">Add</button>
@@ -194,6 +198,6 @@
     <button data-view="articles" data-icon="book" data-acc="read" class="tab"><span class="ticon"></span>Library</button>
   </nav>
 
-  <script src="app.js?v=74"></script>
+  <script src="app.js?v=75"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "74";
+const WEB_VERSION = "75";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -24,6 +24,7 @@ const PATHS = {
   habits: atob("MjBfTGlmZWxvZy9IYWJpdExvZy5tZA=="),
   indrive: atob("MTBfUHJvamVjdHMvSW5Ecml2ZS9pbmRyaXZlLWluY29tZS5tZA=="),
   gym: atob("MTBfUHJvamVjdHMvRml0bmVzcy9neW0tbG9nLm1k"),
+  notesDir: atob("MjBfTGlmZWxvZy9Ob3Rlcy8="),
 };
 
 const LS_TOKEN = "kernel_pat";
@@ -38,7 +39,11 @@ const state = {
   article: null,      // name of the open article, or null for the list
   articleTag: "",     // Read-tab category chip filter ("" = All)
   articleQuery: "",   // Read-tab search filter
-  files: {},          // clients/savings/debts/studyplan/schedule: raw · daily: {text, sha}|null · articles: [{name, text}]
+  libTab: "notes",    // Library segment: "notes" | "articles"
+  note: null,         // path of the open note, or null for the list
+  noteEdit: false,    // the open note is in edit mode (title + text fields)
+  noteQuery: "",      // Notes search filter
+  files: {},          // clients/savings/debts/studyplan/schedule: raw · daily: {text, sha}|null · articles: [{name, text}] · notes: [{path, sha, text}]
   lastSync: null,
   error: null,
   busy: false,        // a write is in flight
@@ -379,6 +384,8 @@ const ICONS = {
   search: "M21 21l-4.34-4.34 M3 11a8 8 0 1 0 16 0 8 8 0 1 0-16 0",
   ext: "M15 3h6v6 M10 14 21 3 M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
   trash: "M3 6h18 M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6 M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2",
+  pin: "M12 17v5 M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z",
+  listcheck: "m3 17 2 2 4-4 M3 7l2 2 4-4 M13 6h8 M13 12h8 M13 18h8",
   bell: "M10.27 21a2 2 0 0 0 3.46 0 M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.41 13.96 18 12.5 18 8A6 6 0 0 0 6 8c0 4.5-1.41 5.96-2.74 7.33",
   refresh: "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8 M21 3v5h-5",
   alert: "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z M12 9v4 M12 17h.01",
@@ -525,6 +532,19 @@ async function putFile(path, text, message, sha) {
   return j.content.sha;
 }
 
+async function deleteFile(path, message, sha) {
+  const res = await fetch(contentsUrl(path), {
+    method: "DELETE",
+    headers: { ...ghHeaders(), Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+    body: JSON.stringify({ message, sha, branch: BRANCH }),
+    keepalive: true,
+  });
+  if (res.status === 404) return; // already gone
+  if (res.status === 401 || res.status === 403) throw new Error("auth-write");
+  if (res.status === 409 || res.status === 422) throw new Error("conflict");
+  if (!res.ok) throw new Error(`delete ${res.status}`);
+}
+
 function todayNoteName() {
   const d = new Date();
   const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -553,6 +573,7 @@ async function flushAllPending() {
   if (_transportTimer) { clearTimeout(_transportTimer); _transportTimer = null; jobs.push(flushTransport()); }
   if (_indriveTimer) { clearTimeout(_indriveTimer); _indriveTimer = null; jobs.push(flushIndrive()); }
   if (_gymTimer) { clearTimeout(_gymTimer); _gymTimer = null; jobs.push(flushGym()); }
+  Object.keys(_noteTimers).forEach((path) => { clearTimeout(_noteTimers[path]); delete _noteTimers[path]; jobs.push(flushNote(path)); });
   await Promise.all(jobs);
 }
 
@@ -570,7 +591,7 @@ async function syncAll() {
       fetchRaw(PATHS.debts),
       fetchRaw(PATHS.studyplan, { optional: true }),
       fetchWithSha(todayNotePath(), { optional: true }),
-      fetchTree().catch(() => []),
+      fetchTree().catch(() => null),
       fetchRaw(PATHS.masterplan, { optional: true }),
       fetchWithSha(PATHS.habits, { optional: true }),
       fetchRaw(PATHS.transport, { optional: true }),
@@ -580,7 +601,7 @@ async function syncAll() {
     /* #Research articles can live anywhere under Projects/Library/top-level
        Lifelog now — fetch every candidate and keep only the tagged ones */
     let articles = [];
-    const candidates = tree.filter((t) => t.type === "blob" && isResearchCandidate(t.path));
+    const candidates = (tree || []).filter((t) => t.type === "blob" && isResearchCandidate(t.path));
     const texts = await Promise.all(candidates.map((f) => fetchRaw(f.path, { optional: true })));
     candidates.forEach((f, i) => {
       const text = texts[i];
@@ -588,7 +609,8 @@ async function syncAll() {
         articles.push({ name: f.path.split("/").pop(), path: f.path, text });
       }
     });
-    state.files = { clients, savings, debts, studyplan, daily, articles, masterplan, habits, transport, indrive, gym };
+    const notes = tree ? await syncNotes(tree) : state.files.notes || [];
+    state.files = { clients, savings, debts, studyplan, daily, articles, masterplan, habits, transport, indrive, gym, notes };
     state.lastSync = Date.now();
     saveCache();
   } catch (e) {
@@ -1265,7 +1287,8 @@ function mdInline(s) {
   return s;
 }
 
-function mdToHtml(md) {
+/* opts.boxes: checklist boxes become buttons carrying their line number (notes tick them in place) */
+function mdToHtml(md, opts = {}) {
   const lines = md.split("\n");
   const out = [];
   let para = [], list = null, quote = [], i = 0;
@@ -1315,9 +1338,11 @@ function mdToHtml(md) {
       const tag = /^\d+\.$/.test(li[1]) ? "ol" : "ul";
       if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
       const box = li[2].match(/^\[([ xX])\]\s*(.*)/);
-      list.items.push(box
-        ? `<span class="md-box ${box[1] !== " " ? "checked" : ""}">${box[1] !== " " ? "✓" : ""}</span> ${mdInline(box[2])}`
-        : mdInline(li[2]));
+      const on = box && box[1] !== " ";
+      list.items.push(!box ? mdInline(li[2])
+        : opts.boxes
+          ? `<button type="button" class="md-box tick ${on ? "checked" : ""}" data-note-box="${i}" aria-label="${on ? "Untick" : "Tick"}">${on ? icon("check", 12, 3) : ""}</button><span class="${on ? "md-done" : ""}">${mdInline(box[2])}</span>`
+          : `<span class="md-box ${on ? "checked" : ""}">${on ? "✓" : ""}</span> ${mdInline(box[2])}`);
       i++;
       continue;
     }
@@ -2201,6 +2226,173 @@ function setGymDays(days) {
   applyGymChange(lines.join("\n"));
 }
 
+/* ---------- notes (one markdown file per note in 20_Lifelog/Notes/) ---------- */
+
+const _noteTimers = {};   // path → debounce timer
+const _noteInflight = {}; // path → the write in progress, so a second save waits for its new SHA
+
+/* notes come from the repo tree: reuse a cached note whose blob SHA hasn't changed,
+   fetch the rest; notes made here but not on GitHub yet (sha null) are kept */
+async function syncNotes(tree) {
+  const cached = {};
+  (state.files.notes || []).forEach((n) => { cached[n.path] = n; });
+  const entries = tree.filter((t) => t.type === "blob" && t.path.startsWith(PATHS.notesDir) && t.path.endsWith(".md")
+    && !t.path.slice(PATHS.notesDir.length).includes("/"));
+  const notes = await Promise.all(entries.map(async (t) => {
+    const c = cached[t.path];
+    if (c && c.sha === t.sha) return c;
+    const text = await fetchRaw(t.path, { optional: true });
+    return text == null ? null : { path: t.path, sha: t.sha, text };
+  }));
+  const onGitHub = new Set(entries.map((t) => t.path));
+  const unsaved = (state.files.notes || []).filter((n) => !n.sha && !onGitHub.has(n.path));
+  return [...notes.filter(Boolean), ...unsaved];
+}
+
+const noteBody = (text) => stripFrontmatter(text).replace(/^\n+/, "");
+const noteHead = (text) => text.slice(0, text.length - noteBody(text).length);
+const nowStamp = () => { const d = new Date(); return `${todayIso()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const unquote = (v) => String(v || "").replace(/\\"/g, '"');
+
+/* set one "key: value" line in a note's frontmatter (adding the frontmatter if the file has none) */
+function setNoteField(text, key, value) {
+  if (!/^---\r?\n[\s\S]*?\r?\n---/.test(text)) text = `---\n---\n\n${text}`;
+  const end = text.indexOf("\n---", 3);
+  const head = text.slice(0, end), rest = text.slice(end);
+  const line = `${key}: ${value}`;
+  const re = new RegExp(`^${key}:.*$`, "m");
+  return (re.test(head) ? head.replace(re, line) : `${head}\n${line}`) + rest;
+}
+
+function noteInfo(n) {
+  const fm = frontmatter(n.text);
+  const body = noteBody(n.text);
+  const lines = body.split("\n");
+  const firstText = lines.find((l) => l.trim()) || "";
+  const plain = (l) => l.replace(/^\s*(#+|[-*]\s+\[[ xX]\]|[-*]|\d+\.)\s*/, "").replace(/[*_`]/g, "").trim();
+  const title = unquote(fm.title).trim();
+  const boxes = body.match(/^\s*[-*] \[[ xX]\]/gm) || [];
+  const done = body.match(/^\s*[-*] \[[xX]\]/gm) || [];
+  const previewLines = lines.filter((l) => l.trim()).slice(title ? 0 : 1).map(plain).filter(Boolean);
+  return {
+    path: n.path,
+    title,
+    display: title || plain(firstText) || "Untitled note",
+    preview: previewLines.slice(0, 2).join(" · "),
+    pinned: String(fm.pinned).toLowerCase() === "true",
+    created: fm.created || "",
+    updated: fm.updated || fm.created || "",
+    boxes: boxes.length,
+    done: done.length,
+    body,
+    unsaved: !n.sha,
+  };
+}
+
+const findNote = (path) => (state.files.notes || []).find((n) => n.path === path);
+
+function newNotePath(seed) {
+  const d = new Date();
+  const slug = (seed || "").toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim()
+    .replace(/[\s_]+/g, "-").replace(/-+/g, "-").slice(0, 40).replace(/-$/, "") || "note";
+  const base = `${PATHS.notesDir}${todayIso()}-${pad2(d.getHours())}${pad2(d.getMinutes())}-${slug}`;
+  let path = `${base}.md`, i = 2;
+  while (findNote(path)) path = `${base}-${i++}.md`;
+  return path;
+}
+
+/* make a note locally and queue its first save; returns its path */
+function createNote(title, body) {
+  const stamp = nowStamp();
+  const text = `---\ntitle: ${JSON.stringify(title || "")}\ncreated: ${stamp}\nupdated: ${stamp}\npinned: false\ntags:\n  - note\n---\n\n${body || ""}`;
+  const path = newNotePath(title || (body || "").split("\n")[0]);
+  /* a note started empty is named on its first save, once it has a title or a first line */
+  state.files.notes = [...(state.files.notes || []), { path, sha: null, text, autoName: !title && !body }];
+  if (title || body) queueNoteSave(path);
+  return path;
+}
+
+/* change a note's text in memory and queue the save; render only when asked (typing must keep focus) */
+function changeNote(path, fn, { rerender = true } = {}) {
+  const n = findNote(path);
+  if (!n) return;
+  n.text = setNoteField(fn(n.text), "updated", nowStamp());
+  queueNoteSave(path);
+  if (rerender) render();
+}
+
+function queueNoteSave(path) {
+  if (_noteTimers[path]) clearTimeout(_noteTimers[path]);
+  _noteTimers[path] = setTimeout(() => { delete _noteTimers[path]; flushNote(path); }, SAVE_DELAY);
+  setSyncStatus("Saving…");
+}
+
+async function flushNote(path) {
+  if (_noteInflight[path]) await _noteInflight[path];
+  const n = findNote(path);
+  if (!n) return;
+  if (!n.sha && n.autoName) {
+    const info = noteInfo(n);
+    n.autoName = false;
+    const named = newNotePath(info.title || info.display);
+    if (named !== n.path) { if (state.note === n.path) state.note = named; n.path = path = named; }
+  }
+  const job = (async () => {
+    try {
+      n.sha = await putFile(path, n.text, n.sha ? "kernel-app: update note" : "kernel-app: add note", n.sha || undefined);
+      state.lastSync = Date.now();
+      saveCache();
+      if (state.error && /note/i.test(state.error)) state.error = null;
+    } catch (e) {
+      state.error = e.message === "auth-write" ? "Write rejected — your token needs Contents: Read and write to save notes."
+        : e.message === "conflict" ? "This note changed on GitHub since last sync. Sync and try again."
+        : "Couldn't save the note — it's kept here and saves on the next try.";
+      saveCache();
+    }
+  })();
+  _noteInflight[path] = job;
+  await job;
+  delete _noteInflight[path];
+  /* re-rendering mid-typing would drop the cursor, so the editor only refreshes the status line */
+  if (state.noteEdit && state.note === path && !state.error) setSyncStatus();
+  else render();
+}
+
+async function deleteNote(path) {
+  const n = findNote(path);
+  if (!n) return;
+  if (_noteTimers[path]) { clearTimeout(_noteTimers[path]); delete _noteTimers[path]; }
+  if (_noteInflight[path]) await _noteInflight[path];
+  state.files.notes = state.files.notes.filter((x) => x.path !== path);
+  if (state.note === path) { state.note = null; state.noteEdit = false; }
+  render();
+  if (!n.sha) { saveCache(); return; }
+  try {
+    await deleteFile(path, "kernel-app: delete note", n.sha);
+    saveCache();
+  } catch (e) {
+    state.files.notes.push(n); // put it back so nothing is lost
+    state.error = e.message === "auth-write" ? "Delete rejected — your token needs Contents: Read and write."
+      : "Couldn't delete the note — check your connection and try again.";
+  }
+  render();
+}
+
+/* leave the open note; a brand-new note left empty is dropped instead of saved */
+function closeNote({ rerender = true } = {}) {
+  const n = state.note && findNote(state.note);
+  if (n && !n.sha) {
+    const info = noteInfo(n);
+    if (!info.title && !info.body.trim()) {
+      if (_noteTimers[n.path]) { clearTimeout(_noteTimers[n.path]); delete _noteTimers[n.path]; }
+      state.files.notes = state.files.notes.filter((x) => x !== n);
+    }
+  }
+  state.note = null;
+  state.noteEdit = false;
+  if (rerender) { showBars(); render(); scrollTo(0, 0); }
+}
+
 /* ---------- shared render helpers ---------- */
 
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -2954,7 +3146,82 @@ function renderHabits(m) {
 
 /* ---------- Library ---------- */
 
+/* Library = Notes (yours, editable) + Articles (research notes, read-only) */
+function libSeg(m) {
+  const notes = (state.files.notes || []).length;
+  return `
+    <div class="seg acc lg">
+      <button data-lib-tab="notes" class="${state.libTab === "notes" ? "active" : ""}">Notes${notes ? ` (${notes})` : ""}</button>
+      <button data-lib-tab="articles" class="${state.libTab === "articles" ? "active" : ""}">Articles${m.articles.length ? ` (${m.articles.length})` : ""}</button>
+    </div>`;
+}
+
+/* "2026-10-25 14:03" → "Sun, Oct 25 · 14:03" */
+const noteWhen = (stamp) => [dowDate(stamp), String(stamp).slice(11, 16)].filter(Boolean).join(" · ");
+
+function noteCard(n) {
+  const meta = [shortDate(n.updated), n.boxes ? `${n.done}/${n.boxes} done` : "", n.unsaved ? "not saved yet" : ""].filter(Boolean).join(" · ");
+  return `
+    <button class="card note-card" data-note="${esc(n.path)}">
+      <span class="note-title">${n.pinned ? `<span class="note-pin">${icon("pin", 14)}</span>` : ""}${esc(n.display)}</span>
+      ${n.preview ? `<span class="note-preview">${esc(n.preview)}</span>` : ""}
+      <span class="note-meta">${esc(meta)}</span>
+    </button>`;
+}
+
+function renderNotesList() {
+  const all = (state.files.notes || []).map(noteInfo).sort((a, b) => b.updated.localeCompare(a.updated));
+  const q = state.noteQuery.trim().toLowerCase();
+  const matches = all.filter((n) => !q || [n.title, n.body].some((f) => f.toLowerCase().includes(q)));
+  const pinned = matches.filter((n) => n.pinned), rest = matches.filter((n) => !n.pinned);
+  const search = all.length ? `
+    <div class="search-bar">
+      ${icon("search", 18)}
+      <input type="search" id="note-search" placeholder="Search ${all.length} note${all.length === 1 ? "" : "s"}" value="${esc(state.noteQuery)}" autocomplete="off">
+      ${q ? `<button class="search-clear" id="note-search-clear" aria-label="Clear search">${icon("x", 16)}</button>` : ""}
+    </div>` : "";
+  if (!all.length) return `${search}<div class="empty">No notes yet. Tap + to write one.</div>`;
+  if (!matches.length) return `${search}<div class="empty">No notes match "${esc(state.noteQuery)}"</div>`;
+  return `${search}
+    ${pinned.length ? `<div class="note-group">Pinned</div>${pinned.map(noteCard).join("")}` : ""}
+    ${pinned.length && rest.length ? `<div class="note-group">Others</div>` : ""}
+    ${rest.map(noteCard).join("")}`;
+}
+
+function renderNote() {
+  const raw = findNote(state.note);
+  if (!raw) { state.note = null; state.noteEdit = false; return null; }
+  const n = noteInfo(raw);
+  const actions = `
+    <div class="note-actions">
+      ${backLink("btn-note-back", "Library")}
+      <span class="note-actions-r">
+        <button class="icon-pill${n.pinned ? " on" : ""}" id="btn-note-pin" aria-pressed="${n.pinned}" title="${n.pinned ? "Unpin" : "Pin to the top"}">${icon("pin", 18)}</button>
+        <button class="icon-pill danger" id="btn-note-del" title="Delete note" aria-label="Delete note">${icon("trash", 18)}</button>
+        <button class="icon-pill label" id="btn-note-edit">${state.noteEdit ? `${icon("check", 18, 2.5)}Done` : `${icon("pencil", 16)}Edit`}</button>
+      </span>
+    </div>`;
+  if (state.noteEdit) {
+    return `${actions}
+      <input type="text" id="note-title" class="note-title-input" placeholder="Title" value="${esc(n.title)}" autocomplete="off">
+      <textarea id="note-text" class="note-text" placeholder="Write anything. Start a line with - [ ] for a checkbox.">${esc(n.body)}</textarea>
+      <button class="ghost sm note-box-btn" id="btn-note-box">${icon("listcheck", 18)}Add a checkbox</button>`;
+  }
+  const bodyHtml = n.body.trim() ? mdToHtml(n.body, { boxes: true }) : `<p class="muted">Empty note. Tap Edit to write.</p>`;
+  return `${actions}
+    <article class="article note-view">
+      ${n.title ? `<h1>${esc(n.title)}</h1>` : ""}
+      <div class="art-meta muted">${n.unsaved ? "Not saved yet" : `Edited ${esc(noteWhen(n.updated))}`}</div>
+      <div id="note-body">${bodyHtml}</div>
+    </article>`;
+}
+
 function renderArticles(m) {
+  if (state.note) {
+    const html = renderNote();
+    if (html) return html;
+  }
+  if (state.libTab === "notes" && !state.article) return libSeg(m) + renderNotesList();
   if (state.article) {
     const a = m.articles.find((x) => x.path === state.article);
     if (a) {
@@ -2972,7 +3239,7 @@ function renderArticles(m) {
     }
     state.article = null;
   }
-  if (!m.articles.length) return `<div class="empty">No research articles in the vault yet</div>`;
+  if (!m.articles.length) return `${libSeg(m)}<div class="empty">No research articles in the vault yet</div>`;
 
   const q = state.articleQuery.trim().toLowerCase();
   const tagCounts = {};
@@ -2986,7 +3253,7 @@ function renderArticles(m) {
   const search = `
     <div class="search-bar">
       ${icon("search", 18)}
-      <input type="search" id="art-search" placeholder="Search ${m.articles.length} note${m.articles.length === 1 ? "" : "s"}" value="${esc(state.articleQuery)}" autocomplete="off">
+      <input type="search" id="art-search" placeholder="Search ${m.articles.length} article${m.articles.length === 1 ? "" : "s"}" value="${esc(state.articleQuery)}" autocomplete="off">
       ${q ? `<button class="search-clear" id="art-search-clear" aria-label="Clear search">${icon("x", 16)}</button>` : ""}
     </div>
     ${topTags.length ? `<div class="chip-scroll">
@@ -3009,7 +3276,82 @@ function renderArticles(m) {
       }).join("")}</div>`
     : `<div class="empty">No articles match${q ? ` "${esc(state.articleQuery)}"` : ""}</div>`;
 
-  return search + list;
+  return libSeg(m) + search + list;
+}
+
+/* wire the open note's buttons, editor fields and checklist boxes */
+function bindNote() {
+  const cur = () => state.note; // the path can change on a new note's first save
+  const back = $("#btn-note-back");
+  if (back) back.onclick = () => closeNote();
+  const pin = $("#btn-note-pin");
+  if (pin) pin.onclick = () => {
+    const on = noteInfo(findNote(cur())).pinned;
+    changeNote(cur(), (t) => setNoteField(t, "pinned", on ? "false" : "true"));
+  };
+  const del = $("#btn-note-del");
+  if (del) del.onclick = async () => {
+    const n = findNote(cur());
+    if (!n) return;
+    if (!(await confirmBox("Delete note?", `"${noteInfo(n).display}" is deleted from the vault.`, "Delete"))) return;
+    deleteNote(cur());
+  };
+  const edit = $("#btn-note-edit");
+  if (edit) edit.onclick = () => {
+    state.noteEdit = !state.noteEdit;
+    if (!state.noteEdit && _noteTimers[cur()]) { clearTimeout(_noteTimers[cur()]); delete _noteTimers[cur()]; flushNote(cur()); }
+    render();
+    if (state.noteEdit) focusNoteText();
+  };
+  const title = $("#note-title");
+  if (title) title.oninput = () => changeNote(cur(), (t) => setNoteField(t, "title", JSON.stringify(title.value.trim())), { rerender: false });
+  const ta = $("#note-text");
+  if (ta) {
+    const grow = () => { ta.style.height = "auto"; ta.style.height = `${Math.max(ta.scrollHeight, 240)}px`; };
+    grow();
+    ta.oninput = () => { grow(); changeNote(cur(), (t) => noteHead(t) + ta.value, { rerender: false }); };
+  }
+  const boxBtn = $("#btn-note-box");
+  if (boxBtn && ta) {
+    boxBtn.onpointerdown = (e) => e.preventDefault(); // keep the keyboard up
+    boxBtn.onclick = () => {
+      const pos = ta.selectionStart ?? ta.value.length;
+      const lineStart = ta.value.lastIndexOf("\n", pos - 1) + 1;
+      const lineEnd = ta.value.indexOf("\n", pos) === -1 ? ta.value.length : ta.value.indexOf("\n", pos);
+      const line = ta.value.slice(lineStart, lineEnd);
+      let caret;
+      if (!line.trim()) { ta.value = ta.value.slice(0, lineStart) + "- [ ] " + ta.value.slice(lineEnd); caret = lineStart + 6; }
+      else { ta.value = ta.value.slice(0, lineEnd) + "\n- [ ] " + ta.value.slice(lineEnd); caret = lineEnd + 7; }
+      ta.focus();
+      ta.setSelectionRange(caret, caret);
+      ta.oninput();
+    };
+  }
+  const body = $("#note-body");
+  if (body) body.onclick = (e) => {
+    const box = e.target.closest("[data-note-box]");
+    if (box) {
+      const i = Number(box.dataset.noteBox);
+      changeNote(cur(), (t) => {
+        const lines = noteBody(t).split("\n");
+        const l = lines[i] || "";
+        lines[i] = /\[[xX]\]/.test(l) ? l.replace(/\[[xX]\]/, "[ ]") : l.replace("[ ]", "[x]");
+        return noteHead(t) + lines.join("\n");
+      });
+      return;
+    }
+    if (e.target.closest("a")) return;
+    state.noteEdit = true;
+    render();
+    focusNoteText();
+  };
+}
+
+function focusNoteText() {
+  const ta = $("#note-text");
+  if (!ta) return;
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
 }
 
 /* in-app reader for the cloud study plan — reuses the article styling + floating back */
@@ -3177,10 +3519,11 @@ function render() {
   const retryBtn = $("#btn-banner-retry");
   if (retryBtn) retryBtn.onclick = () => syncAll();
   $("#view").dataset.tab = state.studyDoc ? "study" : v;
-  const reading = state.studyDoc || (v === "articles" && !!state.article);
-  setChrome(state.studyDoc ? "read" : VIEW_ACC[v] || "today", reading || OFF_BAR.includes(v), OFF_BAR.includes(v));
+  const reading = state.studyDoc || (v === "articles" && (!!state.article || !!state.note));
+  const noteEditing = v === "articles" && !!state.note && state.noteEdit; // keyboard up: give the editor the whole screen
+  setChrome(state.studyDoc ? "read" : VIEW_ACC[v] || "today", reading || OFF_BAR.includes(v), OFF_BAR.includes(v) || noteEditing);
 
-  const viewKey = state.studyDoc ? "study" : state.article ? `article:${state.article}` : v;
+  const viewKey = state.studyDoc ? "study" : state.article ? `article:${state.article}` : state.note ? `note:${state.note}` : v === "articles" ? `articles:${state.libTab}` : v;
   animateViewChange(_lastViewKey, viewKey);
   _lastViewKey = viewKey;
 
@@ -3194,7 +3537,8 @@ function render() {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === v));
 
   /* the floating add button adds tasks on Today, habits on Habits (never over the reader) */
-  $("#fab").classList.toggle("hidden", state.studyDoc || (v !== "today" && v !== "habits" && v !== "indrive" && v !== "gym"));
+  const notesList = v === "articles" && state.libTab === "notes" && !state.note && !state.article;
+  $("#fab").classList.toggle("hidden", state.studyDoc || (v !== "today" && v !== "habits" && v !== "indrive" && v !== "gym" && !notesList));
   $("#fab").dataset.tab = v;
   $("#fab").disabled = state.busy;
 
@@ -3407,6 +3751,25 @@ function render() {
     if (hs) hs.onclick = healthSyncNow;
   }
   if (v === "articles") {
+    document.querySelectorAll("[data-lib-tab]").forEach((b) => {
+      b.onclick = () => { state.libTab = b.dataset.libTab; state.article = null; render(); scrollTo(0, 0); };
+    });
+    document.querySelectorAll("[data-note]").forEach((b) => {
+      b.onclick = () => { state.note = b.dataset.note; state.noteEdit = false; showBars(); render(); scrollTo(0, 0); };
+    });
+    const noteSearch = $("#note-search");
+    if (noteSearch) {
+      noteSearch.oninput = () => {
+        state.noteQuery = noteSearch.value;
+        const pos = noteSearch.selectionStart;
+        render();
+        const again = $("#note-search");
+        if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+      };
+    }
+    const noteClr = $("#note-search-clear");
+    if (noteClr) noteClr.onclick = () => { state.noteQuery = ""; render(); const s = $("#note-search"); if (s) s.focus(); };
+    if (state.note) bindNote();
     document.querySelectorAll("[data-article]").forEach((b) => {
       b.onclick = () => { state.article = b.dataset.article; state.articleReturn = null; showBars(); render(); scrollTo(0, 0); };
     });
@@ -3499,12 +3862,25 @@ function closeConfirm(result) {
 
 /* ---------- task composer ---------- */
 
+let _composerMode = "tasks"; // the Today + button writes tasks, or a quick note for the Library
+
+function setComposerMode(mode) {
+  _composerMode = mode;
+  document.querySelectorAll("[data-cmode]").forEach((b) => b.classList.toggle("active", b.dataset.cmode === mode));
+  const note = mode === "note";
+  $("#composer .sheet-title").textContent = note ? "Quick note" : "Add tasks";
+  $("#composer-text").placeholder = note ? "Jot it down. The first line becomes the title." : "What needs doing? Type / to link an article.";
+  $("#composer-hint").textContent = note ? "Saved to Notes in the Library" : "One task per line · saved in one sync";
+  updateComposerCount();
+}
 function updateComposerCount() {
+  if (_composerMode === "note") { $("#composer-add").textContent = "Save note"; return; }
   const n = $("#composer-text").value.split("\n").filter((l) => l.trim()).length;
   $("#composer-add").textContent = n > 1 ? `Add ${n} tasks` : "Add";
 }
 function openComposer() {
   if (state.busy) return;
+  setComposerMode("tasks");
   $("#composer").classList.remove("hidden");
   buildComposerArticles();
   updateComposerCount();
@@ -3823,6 +4199,7 @@ function goToTab(view) {
   /* remember where drilled-in screens were opened from, for their back links */
   if (view === "settings" && !OFF_BAR.includes(state.view)) state.settingsFrom = state.view;
   if ((view === "indrive" || view === "clients") && state.view !== view) state.subFrom = state.view;
+  if (state.note) closeNote({ rerender: false });
   state.view = view;
   state.article = null;
   state.articleReturn = null;
@@ -3869,6 +4246,15 @@ $("#fab").onclick = () => {
   if (state.view === "habits") return openHabitModal();
   if (state.view === "indrive") return openIndriveSheet(null);
   if (state.view === "gym") return openGymSheet(null);
+  if (state.view === "articles") {
+    state.note = createNote("", "");
+    state.noteEdit = true;
+    render();
+    scrollTo(0, 0);
+    const t = $("#note-title");
+    if (t) t.focus();
+    return;
+  }
   return openComposer();
 };
 $("#fab-secondary").innerHTML = icon("scale", 22);
@@ -3894,10 +4280,21 @@ $("#composer-articles").onclick = (e) => {
   }
 };
 $("#composer-add").onclick = () => {
-  const texts = $("#composer-text").value.split("\n");
+  const value = $("#composer-text").value;
+  const mode = _composerMode;
   closeComposer();
-  addTasks(texts);
+  if (mode === "note") {
+    const lines = value.split("\n");
+    const title = (lines.shift() || "").trim();
+    const body = lines.join("\n").replace(/^\s*\n/, "").trimEnd();
+    if (title || body) { createNote(title, body); render(); }
+    return;
+  }
+  addTasks(value.split("\n"));
 };
+document.querySelectorAll("[data-cmode]").forEach((b) => {
+  b.onclick = () => { setComposerMode(b.dataset.cmode); $("#composer-text").focus(); };
+});
 $("#habit-cancel").onclick = closeHabitModal;
 $("#habit-modal").onclick = (e) => { if (e.target.id === "habit-modal") closeHabitModal(); };
 $("#habit-add").onclick = () => {
@@ -4058,6 +4455,10 @@ window.kernelBack = function () {
   if (state.debtEdit) { state.debtEdit = null; state.debtStatusPick = null; render(); return true; }
   if (state.habitsEdit) { state.habitsEdit = false; render(); return true; }
   if (state.studyDoc) { state.studyDoc = false; showBars(); render(); scrollTo(0, 0); return true; }
+  if (state.view === "articles" && state.note) {
+    if (state.noteEdit) $("#btn-note-edit").click(); else closeNote();
+    return true;
+  }
   if (state.view === "articles" && state.article) { $("#btn-art-back").click(); return true; }
   if (state.view === "settings") { goToTab(state.settingsFrom || "today"); return true; }
   if (state.view === "indrive" || state.view === "clients") { goToTab(state.subFrom || "settings"); return true; }
