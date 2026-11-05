@@ -425,6 +425,14 @@ input[readonly] { color: var(--mu); }
 }
 .task[disabled] { opacity: 0.5; }
 .task .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* Today: ticked tasks fold into a Done section under the to-do list */
+.done-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px; margin-top: 4px; padding: 0;
+  background: none; border: none; border-top: 1px solid var(--hr);
+  font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mu);
+}
+.done-toggle .done-n { margin-left: auto; letter-spacing: 0; font-size: 13px; color: var(--tx); }
+.done-list .task-row:last-child { border-bottom: none; }
 .task.done .txt { color: var(--mu); text-decoration: line-through; }
 .task:active .box { transform: scale(0.88); }
 .task-link {

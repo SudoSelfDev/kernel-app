@@ -5,7 +5,7 @@
 
 /* real version: the Android build reports its versionName (1.0.<build>); the web build
    (SudoSelfDev/kernel-app) shows WEB_VERSION — keep it in sync with the CACHE name in its sw.js */
-const WEB_VERSION = "77";
+const WEB_VERSION = "78";
 const APP_VERSION = "v" + ((window.KernelNative && window.KernelNative.versionName && window.KernelNative.versionName()) || `${WEB_VERSION} (web)`);
 
 const OWNER = "SudoSelfDev";
@@ -66,7 +66,7 @@ const state = {
   gymWorkoutPick: null, // "A" | "B" | "C" chosen in the currently-open gym sheet (before save)
   gymWeek: 0, // Gym tab week plan: 0 = this week, 1 = next week
   bwEdit: null, // date of the bodyweight row open in the log/edit sheet, or null for a new entry
-  tasksAll: false, // show every Today task instead of the first few
+  tasksAll: false, // Today: Done section unfolded
   health: null, // Samsung Health / Health Connect snapshot (native Android build only)
   habitPop: null, // name of the habit whose checkbox should play the pop-in animation on this render, or null
   settingsFrom: null, // tab that opened Settings — its back link returns there
@@ -2508,14 +2508,13 @@ function renderToday(m) {
   const dis = state.busy ? "disabled" : "";
   const rot = gymRotation(m);
 
-  const TASK_LIMIT = 6;
+  /* to-do tasks always show in full; ticked ones drop into a Done section folded under them
+     (display order only — the daily note keeps its own order) */
   const allTasks = m.tasks || [];
-  const shownTasks = state.tasksAll ? allTasks : allTasks.filter((t, i) => i < TASK_LIMIT || state.taskEdit === t.line);
-  const hiddenCount = allTasks.length - shownTasks.length;
-  const tasksHtml = m.tasks === null
-    ? `<div class="empty">No daily note yet today — tap + to start one</div>`
-    : `${m.tasks.length === 0 ? `<div class="empty">Nothing on the list — tap + to add tasks</div>` : ""}
-       ${shownTasks.map((t) => state.taskEdit === t.line
+  const openTasks = allTasks.filter((t) => !t.done);
+  const doneTasks = allTasks.filter((t) => t.done);
+  const doneShown = state.tasksAll || doneTasks.some((t) => state.taskEdit === t.line);
+  const taskRow = (t) => state.taskEdit === t.line
          ? `<div class="task-row task-edit">
               <input type="text" class="task-edit-input" id="task-edit-input" value="${esc(t.text)}" autocomplete="off">
               <button class="task-icon-btn save" data-edit-save="${t.line}" title="Save" aria-label="Save">${icon("check", 18)}</button>
@@ -2528,9 +2527,17 @@ function renderToday(m) {
                 <span class="txt">${linkifyTaskText(t.text, m.articles)}</span>
               </button>
               <button class="task-icon-btn" data-edit-line="${t.line}" title="Edit task" aria-label="Edit task" ${dis}>${icon("pencil", 16)}</button>
-            </div>`).join("")}
-       ${hiddenCount > 0 ? `<button class="ghost" id="btn-tasks-more">+ ${hiddenCount} more</button>`
-         : state.tasksAll && allTasks.length > TASK_LIMIT ? `<button class="ghost" id="btn-tasks-more">Show less</button>` : ""}`;
+            </div>`;
+  const tasksHtml = m.tasks === null
+    ? `<div class="empty">No daily note yet today — tap + to start one</div>`
+    : allTasks.length === 0
+      ? `<div class="empty">Nothing on the list — tap + to add tasks</div>`
+      : `${openTasks.length ? openTasks.map(taskRow).join("") : `<div class="empty">All done — nice work.</div>`}
+         ${doneTasks.length ? `
+           <button class="done-toggle" id="btn-tasks-more" aria-expanded="${doneShown}">
+             ${icon(doneShown ? "chevd" : "chevr", 16)}<span>Done</span><span class="done-n">${doneTasks.length}</span>
+           </button>
+           ${doneShown ? `<div class="done-list">${doneTasks.map(taskRow).join("")}</div>` : ""}` : ""}`;
 
   /* ---- office transport (log-driven booking window, no calendar) ---- */
   const tp = transportPlan(m);
